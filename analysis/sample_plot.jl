@@ -8,7 +8,7 @@ include(joinpath(ROOT, "src", "Analysis.jl"))
 using .Analysis
 
 function main()
-    run_rel = "conductance/pilot/20251009-154724-MPDtiUEC-pilot"
+    run_rel = "sin_waves/20251009-163048-Dh937wQR-dummy"
     run_dir = joinpath(ROOT, "outputs", run_rel)
     isdir(run_dir) || error("Run directory not found: $run_dir")
 
