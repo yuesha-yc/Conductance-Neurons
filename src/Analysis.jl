@@ -3,6 +3,30 @@ module Analysis
 using JSON3, JLD2, Printf
 export load_experiment, list_trials, load_trial, select, plot_series
 
+const _plots_pkgid = Base.PkgId(Base.UUID("91a5bcdd-55d7-5caf-9e0b-520d859cae80"), "Plots")
+
+function _load_plots()
+    try
+        return Base.require(_plots_pkgid)
+    catch e
+        error("Plots.jl is required for plot_series but could not be loaded: $(sprint(showerror, e))")
+    end
+end
+
+function _json_to_data(x)
+    if x isa JSON3.Object
+        d = Dict{String,Any}()
+        for (k,v) in pairs(x)
+            d[String(k)] = _json_to_data(v)
+        end
+        return d
+    elseif x isa JSON3.Array
+        return [_json_to_data(v) for v in x]
+    else
+        return x
+    end
+end
+
 struct ExperimentHandle
     root::String
     runpath::String  # outputs/<rel>/<run_id>
@@ -24,14 +48,14 @@ end
 
 function list_trials(exp::ExperimentHandle)
     mpath = joinpath(exp.runpath, "manifest.json")
-    m = JSON3.read(read(mpath, String)) |> Dict
-    return m["trials"]
+    m = _json_to_data(JSON3.read(read(mpath, String)))
+    return get(m, "trials", Vector{Any}())
 end
 
 function load_trial(exp::ExperimentHandle, trial_id::AbstractString)
     tdir = joinpath(exp.runpath, "trials", trial_id)
-    params = JSON3.read(read(joinpath(tdir, "params.json"), String)) |> Dict
-    meta = JSON3.read(read(joinpath(tdir, "meta.json"), String)) |> Dict
+    params = _json_to_data(JSON3.read(read(joinpath(tdir, "params.json"), String)))
+    meta = _json_to_data(JSON3.read(read(joinpath(tdir, "meta.json"), String)))
     out = Dict{String,Any}()
     if isfile(joinpath(tdir, "results.jld2"))
         @load joinpath(tdir, "results.jld2") out
@@ -56,11 +80,11 @@ function select(exp::ExperimentHandle, key::AbstractString; only::Symbol=:ok)
 end
 
 function plot_series(exp::ExperimentHandle, trial_id; x::AbstractString="t", y::AbstractString="V")
-    using Plots
+    plots = _load_plots()
     tdir = joinpath(exp.runpath, "trials", trial_id)
     out = Dict{String,Any}(); @load joinpath(tdir, "results.jld2") out
     xs = out[Symbol(x)]; ys = out[Symbol(y)]
-    plot(xs, ys, xlabel=x, ylabel=y, title="$(basename(exp.runpath))/$trial_id")
+    Base.invokelatest(plots.plot, xs, ys; xlabel=x, ylabel=y, title="$(basename(exp.runpath))/$trial_id")
 end
 
 end # module

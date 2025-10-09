@@ -1,6 +1,5 @@
 #!/usr/bin/env julia
 
-using .Sweeps, .Experiments
 using Dates, Printf, JSON3
 
 include("SimCore.jl"); using .SimCore
@@ -94,4 +93,6 @@ function main(args)
     end
 end
 
-abspath(PROGRAM_FILE) == @__FILE__ && main(ARGS)
+if isdefined(Main, :PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(Base.source_path())
+    main(ARGS)
+end

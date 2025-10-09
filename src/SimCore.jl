@@ -9,6 +9,10 @@ Base.@kwdef struct SimParams
     base_rate::Float64 = 100.0
     K_e::Int = 200
     K_i::Int = 50
+    seed::Int = 0
+    model::String = ""
+    save_downsampled::Bool = false
+    E_L::Float64 = -65.0
 end
 
 """

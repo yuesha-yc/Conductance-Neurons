@@ -1,6 +1,7 @@
 module Experiments
 
 using Dates, JSON3, JLD2, Random, Logging, Printf
+using ..SimCore
 import Base: mkdir
 
 export run_trial, make_exp_run_dir, write_manifest_skeleton, append_summary_row, finalize_manifest
@@ -22,6 +23,20 @@ function _write_json(path, obj)
     end
 end
 
+function _json_to_data(x)
+    if x isa JSON3.Object
+        d = Dict{String,Any}()
+        for (k,v) in pairs(x)
+            d[String(k)] = _json_to_data(v)
+        end
+        return d
+    elseif x isa JSON3.Array
+        return [_json_to_data(v) for v in x]
+    else
+        return x
+    end
+end
+
 function write_manifest_skeleton(outdir; spec_path::AbstractString, n_trials::Int)
     manifest = Dict(
         "experiment_run_id" => splitdir(outdir)[2],
@@ -34,15 +49,21 @@ end
 
 function _update_manifest_trial!(outdir, trial_id; status::String, seed::Int, relpath::String)
     mpath = joinpath(outdir, "manifest.json")
-    m = JSON3.read(read(mpath, String)) |> Dict
-    push!(m["trials"], Dict("trial_id"=>trial_id, "status"=>status, "seed"=>seed, "relpath"=>relpath))
-    _write_json(mpath, m)
+    manifest = _json_to_data(JSON3.read(read(mpath, String)))
+    trials = get!(manifest, "trials") do
+        Vector{Any}()
+    end
+    push!(trials, Dict("trial_id"=>trial_id, "status"=>status, "seed"=>seed, "relpath"=>relpath))
+    manifest["trials"] = trials
+    _write_json(mpath, manifest)
 end
 
 function append_summary_row(outdir, trial_id, metrics::Dict)
     spath = joinpath(outdir, "summary.csv")
-    header = "trial_id," * join(collect(keys(metrics)), ",") * "\n"
-    row = trial_id * "," * join(string.(collect(values(metrics))), ",") * "\n"
+    keys_list = collect(keys(metrics))
+    header = "trial_id," * join(string.(keys_list), ",") * "\n"
+    vals_list = [string(metrics[k]) for k in keys_list]
+    row = join(vcat([string(trial_id)], vals_list), ",") * "\n"
     if !isfile(spath)
         open(spath, "w") do io
             write(io, header)
@@ -70,7 +91,7 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
     _write_json(joinpath(trial_dir, "params.json"), Dict(pairs(params)))
 
     # meta (start)
-    meta = Dict(
+    meta = Dict{String,Any}(
         "status" => "running",
         "julia_version" => VERSION |> string,
         "started_at" => Dates.format(now(), Dates.ISODateTimeFormat),
@@ -85,7 +106,6 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
                 Random.seed!(getfield(params, :seed))
             end
             # simulate
-            using ..SimCore
             sp = SimCore.SimParams(; Dict(pairs(params))...)
             t0 = time();
             out = SimCore.simulate(sp)
@@ -103,7 +123,8 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
             write(logio, "OK\n")
             return :ok
         catch e
-            write(logio, "ERROR: " * sprint(showerror, e) * "\n")
+            bt = stacktrace(catch_backtrace())
+            write(logio, "ERROR: " * sprint(showerror, e, bt) * "\n")
             meta["status"] = "error"
             meta["error"] = sprint(showerror, e)
             _write_json(joinpath(trial_dir, "meta.json"), meta)
