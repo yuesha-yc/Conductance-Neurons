@@ -5,10 +5,10 @@ ENV["GKSwstype"] = "100"
 const ROOT = normpath(joinpath(@__DIR__, ".."))
 
 include(joinpath(ROOT, "src", "Analysis.jl"))
-using .Analysis
+using .Analysis, Plots
 
 function main()
-    run_rel = "sin_waves/20251009-163048-Dh937wQR-dummy"
+    run_rel = "sin_waves/20251009-163705-25UYnxic-dummy"
     run_dir = joinpath(ROOT, "outputs", run_rel)
     isdir(run_dir) || error("Run directory not found: $run_dir")
 
@@ -19,9 +19,8 @@ function main()
     trial_id = trials[ok_idx]["trial_id"]
 
     plt = Analysis.plot_series(exp, trial_id)
-    plots = Analysis._load_plots()
     out_path = joinpath(@__DIR__, "sample_plot.png")
-    Base.invokelatest(plots.savefig, plt, out_path)
+    savefig(plt, out_path)
     println("Saved plot for trial $trial_id to $out_path")
 end
 

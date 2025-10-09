@@ -1,17 +1,7 @@
 module Analysis
 
-using JSON3, JLD2, Printf
+using JSON3, JLD2, Printf, Plots
 export load_experiment, list_trials, load_trial, select, plot_series
-
-const _plots_pkgid = Base.PkgId(Base.UUID("91a5bcdd-55d7-5caf-9e0b-520d859cae80"), "Plots")
-
-function _load_plots()
-    try
-        return Base.require(_plots_pkgid)
-    catch e
-        error("Plots.jl is required for plot_series but could not be loaded: $(sprint(showerror, e))")
-    end
-end
 
 function _json_to_data(x)
     if x isa JSON3.Object
@@ -80,11 +70,10 @@ function select(exp::ExperimentHandle, key::AbstractString; only::Symbol=:ok)
 end
 
 function plot_series(exp::ExperimentHandle, trial_id; x::AbstractString="t", y::AbstractString="V")
-    plots = _load_plots()
     tdir = joinpath(exp.runpath, "trials", trial_id)
     out = Dict{String,Any}(); @load joinpath(tdir, "results.jld2") out
     xs = out[Symbol(x)]; ys = out[Symbol(y)]
-    Base.invokelatest(plots.plot, xs, ys; xlabel=x, ylabel=y, title="$(basename(exp.runpath))/$trial_id")
+    plot(xs, ys; xlabel=x, ylabel=y, title="$(basename(exp.runpath))/$trial_id")
 end
 
 end # module
