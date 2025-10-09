@@ -23,7 +23,7 @@ function sin_waves(p::SimParams)
     V = @. -65.0 + 2.0*sin(2π * (p.base_rate/1000.0) * (t/1000.0))
     mean_V = sum(V) / length(V)
     var_V  = sum((V .- mean_V).^2) / (length(V)-1)
-    return (t=t, V=V, metrics=Dict("mean_V"=>mean_V, "var_V"=>var_V))
+    return Dict("t"=>t, "V"=>V, "metrics"=>Dict("mean_V"=>mean_V, "var_V"=>var_V))
 end
 
 """
