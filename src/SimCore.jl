@@ -13,6 +13,7 @@ Base.@kwdef struct SimParams
     model::String = ""
     save_downsampled::Bool = false
     E_L::Float64 = -65.0
+    note::String = ""
 end
 
 """
