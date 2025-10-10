@@ -125,6 +125,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # -------------------------
     time_vec = collect(t_0:dt:(T - dt))   # length N
     N = length(time_vec)
+    println(T)
+    println(N)
 
     # -------------------------
     # Initialize state vectors

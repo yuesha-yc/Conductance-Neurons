@@ -26,39 +26,63 @@ function run_from_json(json_str_or_path::AbstractString)
 end
 
 function run_experiment_from_toml(path::AbstractString; local_threads::Int=0, outputs_root::String="outputs")
-    spec = Sweeps.parse_experiment_toml(path)
+    spec   = Sweeps.parse_experiment_toml(path)
     trials = Sweeps.expand_trials(spec)
-    rel = replace(path, r"^experiments/" => "") |> x -> replace(x, ".toml" => "")
-    tag = get(spec.meta, "tag", nothing)
+    rel    = replace(path, r"^experiments/" => "") |> x -> replace(x, ".toml" => "")
+    tag    = get(spec.meta, "tag", nothing)
     mkpath(joinpath(outputs_root, rel))
-    info = Experiments.make_exp_run_dir(outputs_root, rel; tag=tag)
+    info   = Experiments.make_exp_run_dir(outputs_root, rel; tag=tag)
     outdir = info.outdir
-    # copy spec
+
     mkpath(outdir); cp(path, joinpath(outdir, "spec.toml"), force=true)
     Experiments.write_manifest_skeleton(outdir; spec_path=path, n_trials=length(trials))
 
+    @info "CPU / Threads" cpu_threads=Sys.CPU_THREADS julia_threads=Threads.nthreads()
+
     if local_threads > 0
-        # simple thread pool with a channel
-        @info "Dispatching locally" n_trials=length(trials) threads=local_threads outdir
+        nworkers = min(local_threads, Threads.nthreads())
+        if nworkers < local_threads
+            @warn "Requested more local threads than Julia has; capping." requested=local_threads actually=nworkers
+        end
+
+        @info "Dispatching locally" n_trials=length(trials) workers=nworkers outdir
+
         ch = Channel{Tuple{Int,NamedTuple}}(length(trials))
         for (i,t) in enumerate(trials); put!(ch, (i,t)); end
         close(ch)
-        Threads.@threads for _ in 1:local_threads
-            for (i,t) in ch
-                trial_id = @sprintf("%05d", i)
-                tdir = joinpath(outdir, "trials", trial_id)
-                st = Experiments.run_trial(t, tdir)
-                Experiments._update_manifest_trial!(outdir, trial_id; status=String(st), seed=getfield(t, :seed), relpath=joinpath("trials", trial_id))
+
+        # Optional: a lock if _update_manifest_trial! touches the same file
+        manifest_lock = ReentrantLock()
+
+        # record time
+        start_ns = time_ns()
+        @sync for _ in 1:nworkers
+            Threads.@spawn begin
+                for (i,t) in ch
+                    trial_id = @sprintf("%05d", i)
+                    tdir = joinpath(outdir, "trials", trial_id)
+                    st = Experiments.run_trial(t, tdir)
+                    Base.lock(manifest_lock) do
+                        Experiments._update_manifest_trial!(outdir, trial_id;
+                            status=String(st),
+                            seed = hasproperty(t, :seed) ? getfield(t, :seed) : nothing,
+                            relpath=joinpath("trials", trial_id))
+                    end
+                end
             end
         end
+        elapsed_ns = time_ns() - start_ns
+        println(@sprintf("Elapsed time for parallel experiments: %.3f s", elapsed_ns / 1e9))
     else
         @info "No local threads specified; just expanded spec" n_trials=length(trials)
         println("Use --emit-jsonl to generate a JSONL for SLURM arrays.")
     end
+
     Experiments.finalize_manifest(outdir)
     println("Experiment run at: $outdir")
     return outdir
 end
+
 
 function emit_jsonl_from_toml(path::AbstractString, outpath::AbstractString)
     spec = Sweeps.parse_experiment_toml(path)
@@ -95,7 +119,7 @@ function main(args)
         end
     finally
         elapsed_ns = time_ns() - start_ns
-        println(@sprintf("Total elapsed time: %.3f s", elapsed_ns / 1e9))
+        println(@sprintf("Total elapsed time entirely: %.3f s", elapsed_ns / 1e9))
     end
 end
 
