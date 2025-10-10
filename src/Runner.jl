@@ -68,28 +68,34 @@ function emit_jsonl_from_toml(path::AbstractString, outpath::AbstractString)
 end
 
 function main(args)
-    if isempty(args); usage(); return; end
-    i = 1
-    from_toml = nothing; from_json = nothing; emit_jsonl = nothing
-    local_threads = 0
-    while i <= length(args)
-        arg = args[i]
-        if arg == "--from-toml"; from_toml = args[i+1]; i += 2
-        elseif arg == "--from-json"; from_json = args[i+1]; i += 2
-        elseif arg == "--emit-jsonl"; emit_jsonl = args[i+1]; i += 2
-        elseif arg == "--local-threads"; local_threads = parse(Int, args[i+1]); i += 2
-        else
-            println("Unknown arg: $arg"); usage(); return
+    start_ns = time_ns()
+    try
+        if isempty(args); usage(); return; end
+        i = 1
+        from_toml = nothing; from_json = nothing; emit_jsonl = nothing
+        local_threads = 0
+        while i <= length(args)
+            arg = args[i]
+            if arg == "--from-toml"; from_toml = args[i+1]; i += 2
+            elseif arg == "--from-json"; from_json = args[i+1]; i += 2
+            elseif arg == "--emit-jsonl"; emit_jsonl = args[i+1]; i += 2
+            elseif arg == "--local-threads"; local_threads = parse(Int, args[i+1]); i += 2
+            else
+                println("Unknown arg: $arg"); usage(); return
+            end
         end
-    end
-    if from_json !== nothing
-        run_from_json(from_json)
-    elseif from_toml !== nothing && emit_jsonl !== nothing
-        emit_jsonl_from_toml(from_toml, emit_jsonl)
-    elseif from_toml !== nothing
-        run_experiment_from_toml(from_toml; local_threads=local_threads)
-    else
-        usage()
+        if from_json !== nothing
+            run_from_json(from_json)
+        elseif from_toml !== nothing && emit_jsonl !== nothing
+            emit_jsonl_from_toml(from_toml, emit_jsonl)
+        elseif from_toml !== nothing
+            run_experiment_from_toml(from_toml; local_threads=local_threads)
+        else
+            usage()
+        end
+    finally
+        elapsed_ns = time_ns() - start_ns
+        println(@sprintf("Total elapsed time: %.3f s", elapsed_ns / 1e9))
     end
 end
 
