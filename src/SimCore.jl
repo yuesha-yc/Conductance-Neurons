@@ -5,6 +5,7 @@ using Statistics
 using Printf
 using Plots
 using Distributions
+using Base: @views
 
 export AbstractSimParams, SinParams, SingleConductanceLIF, make_params, simulate
 
@@ -151,10 +152,18 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # -------------------------
     # Time stepping
     # -------------------------
-    for n in 1:(N-1)
+    decay_e = dt / tau_e
+    decay_i = dt / tau_i
+    drive_e = dt * g_L * j_e
+    drive_i = dt * g_L * j_i
+    invC = 1 / C
+
+    @inbounds for n in 1:(N-1)
         # conductance updates
-        g_e[n+1] = g_e[n] + dt * ( ( -g_e[n] + g_L * tau_e * j_e * S_e[n] ) / tau_e )
-        g_i[n+1] = g_i[n] + dt * ( ( -g_i[n] + g_L * tau_i * j_i * S_i[n] ) / tau_i )
+        ge = g_e[n]
+        gi = g_i[n]
+        g_e[n+1] = ge - decay_e * ge + drive_e * S_e[n]
+        g_i[n+1] = gi - decay_i * gi + drive_i * S_i[n]
 
         # refractory handling
         if refr_count > 0
@@ -165,8 +174,9 @@ function single_conductance_lif(p::SingleConductanceLIF)
         end
 
         # membrane update
-        V[n+1] = V[n] + dt * (1 / C) * (
-            - g_L * (V[n] - E_L) - g_e[n] * (V[n] - E_e) - g_i[n] * (V[n] - E_i)
+        Vn = V[n]
+        V[n+1] = Vn + dt * invC * (
+            - g_L * (Vn - E_L) - g_e[n] * (Vn - E_e) - g_i[n] * (Vn - E_i)
         )
 
         # spike check
@@ -194,9 +204,9 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
     # compute fano factor over 100 ms windows
     window_size = Int(fano_window / dt)
-    spike_counts = []
+    spike_counts = Float64[]
     for start_idx in 1:window_size:(length(S_ss) - window_size + 1)
-        window = S_ss[start_idx:(start_idx + window_size - 1)]
+        @views window = S_ss[start_idx:(start_idx + window_size - 1)]
         spike_count = sum(window) * dt
         push!(spike_counts, spike_count)
     end
