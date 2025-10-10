@@ -1,6 +1,6 @@
 module Experiments
 
-using Dates, JSON3, JLD2, Random, Logging, Printf
+using Dates, JSON3, Random, Logging, Printf, NPZ
 using ..SimCore
 import Base: mkdir
 
@@ -110,8 +110,10 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
             t0 = time();
             out = SimCore.simulate(sp)
             elapsed = time() - t0
-            # write results
-            @save joinpath(trial_dir, "results.jld2") out
+            # write JLD2 results
+            # @save joinpath(trial_dir, "results.jld2") out
+            # write NPZ results
+            npzwrite(joinpath(trial_dir, "results.npz"), out)
             # update meta
             meta["status"] = "ok"
             meta["elapsed_sec"] = elapsed

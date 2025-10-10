@@ -17,13 +17,13 @@ Base.@kwdef struct SimParams
 end
 
 """Dummy sine wave generator standing in for a membrane potential time series."""
-function sin_waves(p::SimParams)
+function sin_waves(p::SimParams)::Dict{String,Any}
     n = Int(floor(p.T / p.dt))
     t = collect(0.0:p.dt:(n-1)*p.dt)
     V = @. -65.0 + 2.0*sin(2π * (p.base_rate/1000.0) * (t/1000.0))
     mean_V = sum(V) / length(V)
     var_V  = sum((V .- mean_V).^2) / (length(V)-1)
-    return Dict("t"=>t, "V"=>V, "metrics"=>Dict("mean_V"=>mean_V, "var_V"=>var_V))
+    return Dict("t"=>t, "V"=>V, "mean_V"=>mean_V, "var_V"=>var_V)
 end
 
 """
@@ -31,7 +31,7 @@ end
 
 Entry point for selecting the underlying simulation kernel based on `p.model`.
 """
-function simulate(p::SimParams)
+function simulate(p::SimParams)::Dict{String,Any}
     model_key = lowercase(p.model)
     if isempty(model_key) || model_key == "sin_waves"
         return sin_waves(p)

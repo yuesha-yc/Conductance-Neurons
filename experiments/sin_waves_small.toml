@@ -1,0 +1,18 @@
+[experiment]
+title = "Small Sin Waves"
+description = "Synthetic"
+base_seed = 0
+
+[defaults]
+T = 100000.0
+dt = 0.1
+E_L = -70.0
+
+[fixed]
+model = "sin_waves"
+save_downsampled = true
+
+[grid]
+base_rate = [40.0, 120.0, 240.0, 480.0]
+K_e = [200, 400]
+K_i = [50, 100]
