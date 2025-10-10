@@ -125,8 +125,6 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # -------------------------
     time_vec = collect(t_0:dt:(T - dt))   # length N
     N = length(time_vec)
-    println(T)
-    println(N)
 
     # -------------------------
     # Initialize state vectors
@@ -240,7 +238,7 @@ function make_params(::Val{:sin_waves}, params::NamedTuple)::SinParams
 end
 
 function make_params(::Val{:single_conductance_lif}, params::NamedTuple)::SingleConductanceLIF
-    return SingleConductanceLIF()
+    return SingleConductanceLIF(; params...)
 end
 
 function make_params(::Val{model}, params::NamedTuple)::AbstractSimParams where {model}
