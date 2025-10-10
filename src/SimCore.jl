@@ -1,9 +1,12 @@
 module SimCore
 
-export SimParams, simulate
+export AbstractSimParams, SimParams, make_params, simulate
 
-"""Minimal parameter carrier. Keep simple, JSON-compatible fields only."""
-Base.@kwdef struct SimParams
+"""Marker supertype for all simulation parameter carriers."""
+abstract type AbstractSimParams end
+
+"""Minimal parameter carrier for the sine-wave toy model."""
+Base.@kwdef struct SimParams <: AbstractSimParams
     T::Float64 = 1000.0
     dt::Float64 = 0.1
     base_rate::Float64 = 100.0
@@ -27,17 +30,35 @@ function sin_waves(p::SimParams)::Dict{String,Any}
 end
 
 """
-    simulate(p::SimParams) -> NamedTuple
+    make_params(params::NamedTuple) -> AbstractSimParams
 
-Entry point for selecting the underlying simulation kernel based on `p.model`.
+Select and build the appropriate parameter struct for a simulation model.
 """
-function simulate(p::SimParams)::Dict{String,Any}
-    model_key = lowercase(p.model)
-    if isempty(model_key) || model_key == "sin_waves"
-        return sin_waves(p)
-    else
-        error("Unsupported simulation model: $(p.model)")
-    end
+function make_params(params::NamedTuple)::AbstractSimParams
+    raw_model = get(params, :model, SimParams().model)
+    model_key = Symbol(lowercase(String(raw_model)))
+    return make_params(Val(model_key), params)
 end
+
+function make_params(::Val{:sin_waves}, params::NamedTuple)::SimParams
+    return SimParams(; params...)
+end
+
+function make_params(::Val{model}, params::NamedTuple)::AbstractSimParams where {model}
+    error("Unsupported simulation model: $(model)")
+end
+
+"""
+    simulate(p::AbstractSimParams)
+
+Entry point for selecting the underlying simulation kernel.
+"""
+simulate(params::NamedTuple)::Dict{String,Any} = simulate(make_params(params))
+
+function simulate(p::AbstractSimParams)::Dict{String,Any}
+    error("No simulate method defined for params of type $(typeof(p))")
+end
+
+simulate(p::SimParams)::Dict{String,Any} = sin_waves(p)
 
 end # module

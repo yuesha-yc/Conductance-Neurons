@@ -88,7 +88,7 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
     @info "Running trial" trial_dir
     mkpath(trial_dir)
     # params.json
-    _write_json(joinpath(trial_dir, "params.json"), Dict(pairs(params)))
+    _write_json(joinpath(trial_dir, "params.json"), params)
 
     # meta (start)
     meta = Dict{String,Any}(
@@ -102,13 +102,13 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
     open(joinpath(trial_dir, "log.txt"), "w") do logio
         try
             # seed
-            if haskey(Dict(pairs(params)), :seed)
-                Random.seed!(getfield(params, :seed))
+            if hasproperty(params, :seed)
+                Random.seed!(getproperty(params, :seed))
             end
             # simulate
-            sp = SimCore.SimParams(; Dict(pairs(params))...)
+            sim_params = SimCore.make_params(params)
             t0 = time();
-            out = SimCore.simulate(sp)
+            out = SimCore.simulate(sim_params)
             elapsed = time() - t0
             # write JLD2 results
             # @save joinpath(trial_dir, "results.jld2") out
