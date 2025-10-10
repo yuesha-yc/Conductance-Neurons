@@ -4,6 +4,7 @@ using Random
 using Statistics
 using Printf
 using Plots
+using Distributions
 
 export AbstractSimParams, SinParams, SingleConductanceLIF, make_params, simulate
 
@@ -138,13 +139,13 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # -------------------------
     # Generate spike densities S_e, S_i
     # -------------------------
-    p_spike_e = r_e * dt
-    p_spike_i = r_i * dt
 
-    # sums of Bernoulli(K, p) across K neurons per time step; then divide by dt
-    # (K x N) logicals, sum along dim=1 -> (1 x N), vec(...) to get length-N
-    S_e = vec(sum(rand(K_e, N) .< p_spike_e, dims=1)) ./ dt
-    S_i = vec(sum(rand(K_i, N) .< p_spike_i, dims=1)) ./ dt
+    p_spike_e = K_e * r_e * dt # spike probability per time step
+    p_spike_i = K_i * r_i * dt
+    S_e = rand(N) .< p_spike_e # boolean spike mask
+    S_i = rand(N) .< p_spike_i
+    S_e = S_e .* (1 / dt) # scale spikes to delta-like values
+    S_i = S_i .* (1 / dt)
 
     # -------------------------
     # Time stepping
@@ -185,22 +186,27 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # -------------------------
     # Slice after burn-in and record stats
     # -------------------------
-    V_ss   = @view V[(burn_in_steps+1):end]
-    S_ss   = @view S[(burn_in_steps+1):end]
-    g_e_ss = @view g_e[(burn_in_steps+1):end]
-    g_i_ss = @view g_i[(burn_in_steps+1):end]
+    V_ss   = V[(burn_in_steps+1):end]
+    S_ss   = S[(burn_in_steps+1):end]
+    g_e_ss = g_e[(burn_in_steps+1):end]
+    g_i_ss = g_i[(burn_in_steps+1):end]
 
     # compute fano factor over 100 ms windows
     window_size = Int(fano_window / dt)
     spike_counts = []
     for start_idx in 1:window_size:(length(S_ss) - window_size + 1)
-        window = @view S_ss[start_idx:(start_idx + window_size - 1)]
+        window = S_ss[start_idx:(start_idx + window_size - 1)]
         spike_count = sum(window) * dt
         push!(spike_counts, spike_count)
     end
     mean_spike_count = mean(spike_counts)
     var_spike_count  = var(spike_counts)
     fano_factor = var_spike_count / mean_spike_count
+
+    # compute firing rate using S_ss spike density
+    nu = mean(S_ss) * 1000.0  # in Hz
+
+
     return Dict(
         "t"=>time_vec,
         "V"=>V,
@@ -210,7 +216,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
         "I_i"=>I_i,
         "I_tot"=>I_tot,
         "S"=>S,
-        "S_ss"=>S_ss,
+        "S_e"=>S_e,
+        "S_i"=>S_i,
         "mean_V"=>mean(V_ss),
         "var_V"=>var(V_ss),
         "mean_g_e"=>mean(g_e_ss),
@@ -218,6 +225,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
         "mean_g_i"=>mean(g_i_ss),
         "var_g_i"=>var(g_i_ss),
         "fano_factor"=>fano_factor,
+        "nu"=>nu,
     )
 
 end

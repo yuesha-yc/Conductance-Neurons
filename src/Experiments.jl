@@ -6,6 +6,10 @@ import Base: mkdir
 
 export run_trial, make_exp_run_dir, write_manifest_skeleton, append_summary_row, finalize_manifest
 
+const MANIFEST_LOCK = ReentrantLock()  # you already lock in the caller; keeping here for symmetry
+const SUMMARY_LOCK  = ReentrantLock()
+const NPZ_LOCK      = ReentrantLock()  # TEMP: serialize npz writes to test stability
+
 """Create experiment run directory (id = timestamp + 8-char sha-like tag)"""
 function make_exp_run_dir(root::AbstractString, exp_relpath::AbstractString; tag::Union{Nothing,String}=nothing)
     ts = Dates.format(now(), "yyyymmdd-HHMMSS")
@@ -60,21 +64,24 @@ end
 
 function append_summary_row(outdir, trial_id, metrics::Dict)
     spath = joinpath(outdir, "summary.csv")
-    keys_list = collect(keys(metrics))
-    header = "trial_id," * join(string.(keys_list), ",") * "\n"
-    vals_list = [string(metrics[k]) for k in keys_list]
-    row = join(vcat([string(trial_id)], vals_list), ",") * "\n"
-    if !isfile(spath)
-        open(spath, "w") do io
-            write(io, header)
-            write(io, row)
-        end
-    else
-        open(spath, "a") do io
-            write(io, row)
+    Base.lock(SUMMARY_LOCK) do
+        keys_list = collect(keys(metrics))
+        header = "trial_id," * join(string.(keys_list), ",") * "\n"
+        vals_list = [string(metrics[k]) for k in keys_list]
+        row = join(vcat([string(trial_id)], vals_list), ",") * "\n"
+        if !isfile(spath)
+            open(spath, "w") do io
+                write(io, header)
+                write(io, row)
+            end
+        else
+            open(spath, "a") do io
+                write(io, row)
+            end
         end
     end
 end
+
 
 """Mark manifest as finished (optional)."""
 finalize_manifest(outdir) = nothing
@@ -113,7 +120,11 @@ function run_trial(params::NamedTuple, trial_dir::AbstractString)
             # write JLD2 results
             # @save joinpath(trial_dir, "results.jld2") out
             # write NPZ results
-            npzwrite(joinpath(trial_dir, "results.npz"), out)
+            # inside run_trial, where you write results
+            Base.lock(NPZ_LOCK) do
+                npzwrite(joinpath(trial_dir, "results.npz"), out)
+            end
+
             # update meta
             meta["status"] = "ok"
             meta["elapsed_sec"] = elapsed
