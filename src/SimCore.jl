@@ -1,9 +1,9 @@
+module SimCore
+
 using Random
 using Statistics
 using Printf
 using Plots
-
-module SimCore
 
 export AbstractSimParams, SinParams, SingleConductanceLIF, make_params, simulate
 
@@ -25,7 +25,7 @@ Base.@kwdef struct SinParams <: AbstractSimParams
 end
 
 """Placeholder parameter carrier for the single-conductance LIF model."""
-struct SingleConductanceLIF <: AbstractSimParams
+Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     # general parameters
     seed::Int = 0
     model::String = "sin_waves"
@@ -198,8 +198,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
         spike_count = sum(window) * dt
         push!(spike_counts, spike_count)
     end
-    mean_spike_count = mean(fano_factors)
-    var_spike_count  = var(fano_factors)
+    mean_spike_count = mean(spike_counts)
+    var_spike_count  = var(spike_counts)
     fano_factor = var_spike_count / mean_spike_count
     return Dict(
         "t"=>time_vec,
