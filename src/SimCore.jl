@@ -113,8 +113,9 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
     K = p.K
     gamma = p.gamma
-    K_i = Int(gamma * K)
-    K_e = K
+    # both should be min 1
+    K_i = max(Int(gamma * K), 1)
+    K_e = max(K, 1)
 
     eta = p.eta
     nu_x = p.nu_x
