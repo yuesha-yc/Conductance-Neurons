@@ -201,6 +201,9 @@ function single_conductance_lif(p::SingleConductanceLIF)
     S_ss   = S[(burn_in_steps+1):end]
     g_e_ss = g_e[(burn_in_steps+1):end]
     g_i_ss = g_i[(burn_in_steps+1):end]
+    I_e_ss = I_e[(burn_in_steps+1):end]
+    I_i_ss = I_i[(burn_in_steps+1):end]
+    I_tot_ss = I_tot[(burn_in_steps+1):end]
 
     # compute fano factor over 100 ms windows
     window_size = Int(fano_window / dt)
@@ -219,16 +222,16 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
 
     return Dict(
-        "t"=>time_vec,
-        "V"=>V,
-        "g_e"=>g_e,
-        "g_i"=>g_i,
-        "I_e"=>I_e,
-        "I_i"=>I_i,
-        "I_tot"=>I_tot,
-        "S"=>S,
-        "S_e"=>S_e,
-        "S_i"=>S_i,
+        # "t"=>time_vec,
+        # "V"=>V,
+        # "g_e"=>g_e,
+        # "g_i"=>g_i,
+        # "I_e"=>I_e,
+        # "I_i"=>I_i,
+        # "I_tot"=>I_tot,
+        # "S"=>S,
+        # "S_e"=>S_e,
+        # "S_i"=>S_i,
         "mean_V"=>mean(V_ss),
         "var_V"=>var(V_ss),
         "mean_g_e"=>mean(g_e_ss),
@@ -237,6 +240,12 @@ function single_conductance_lif(p::SingleConductanceLIF)
         "var_g_i"=>var(g_i_ss),
         "fano_factor"=>fano_factor,
         "nu"=>nu,
+        "mean_I_e"=>mean(I_e_ss),
+        "var_I_e"=>var(I_e_ss),
+        "mean_I_i"=>mean(I_i_ss),
+        "var_I_i"=>var(I_i_ss),
+        "mean_I_tot"=>mean(I_tot_ss),
+        "var_I_tot"=>var(I_tot_ss),
     )
 
 end
