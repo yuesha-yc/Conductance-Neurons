@@ -10,5 +10,7 @@
 #SBATCH --output=/gpfs/data/doiron-lab/yichen/out/job_output.%j.txt  # Standard output file
 #SBATCH --error=/gpfs/data/doiron-lab/yichen/out/job_error.%j.err    # Standard error file
 
+module load julia
+
 # Execute the Julia script with parameters
 julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
