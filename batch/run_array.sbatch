@@ -8,18 +8,18 @@
 #SBATCH --mem=16G
 # Default; you can override with sbatch --array=1-N at submit time:
 #SBATCH --array=1-2
-#SBATCH -o /home/yichenw/logs/conductance_neurons_%A_%a.out
-#SBATCH -e /home/yichenw/logs/conductance_neurons_%A_%a.err
+#SBATCH -o logs/conductance_neurons_%A_%a.out
+#SBATCH -e logs/conductance_neurons_%A_%a.err
 # email notifications (BEGIN,END,FAIL,ALL)
-#SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=yichenw@uchicago.edu
+#SBATCH --mail-type=ALL# Mail events (NONE, BEGIN, END, FAIL, ALL)
+#SBATCH --mail-user=yichenw@rcc.uchicago.edu  # Where to send email
 
 
 set -euo pipefail
 
 # ---- user knobs ----
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$PWD}/.."
-JSONL_PATH="${PROJECT_ROOT}/jsonl/nu_x_realistic_candidate3.jsonl"
+JSONL_PATH="${PROJECT_ROOT}/jsonl/nu_x_realistic_candidate4.jsonl"
 JULIA_PROJECT="${PROJECT_ROOT}"   # so --project=. works from $PROJECT_ROOT
 # --------------------
 
@@ -46,15 +46,21 @@ if [[ -z "${LINE}" ]]; then
   exit 3
 fi
 
-# Optional: basic validation (requires jq if present)
+# Write JSON to a temp file and pass the PATH (avoids ENAMETOOLONG)
+TMP_JSON="$(mktemp)"
+printf '%s\n' "${LINE}" > "${TMP_JSON}"
+
+# Optional: validate JSON if jq is available (non-fatal if missing)
 if command -v jq >/dev/null 2>&1; then
-  echo "${LINE}" | jq . >/dev/null || { echo "ERROR: line ${SLURM_ARRAY_TASK_ID} is not valid JSON"; exit 4; }
+  if ! jq . >/dev/null < "${TMP_JSON}"; then
+    echo "ERROR: Invalid JSON at index ${SLURM_ARRAY_TASK_ID}" >&2
+    exit 4
+  fi
 fi
 
-# module purge || true
-# module load julia || true
-
-# Run the trial. We pass the whole JSON object string to --from-json.
-# Runner.jl will create its own per-trial temp dir via run_from_json().
+# Run the trial
 cd "${PROJECT_ROOT}"
-julia --project="${JULIA_PROJECT}" src/Runner.jl --from-json "${LINE}"
+julia --project="${JULIA_PROJECT}" src/Runner.jl --from-json "${TMP_JSON}"
+
+# Cleanup temp file
+rm -f "${TMP_JSON}"

@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # print PROJECT_ROOT
 echo "Project root: ${PROJECT_ROOT}"
-JSONL_PATH="${PROJECT_ROOT}/jsonl/nu_x_realistic_candidate3.jsonl"
+JSONL_PATH="${PROJECT_ROOT}/jsonl/nu_x_realistic_candidate4.jsonl"
 SBATCH_FILE="${PROJECT_ROOT}/batch/run_array.sbatch"
 
 if [[ ! -s "${JSONL_PATH}" ]]; then
