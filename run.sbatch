@@ -21,7 +21,7 @@ echo "Current directory: $(pwd)"
 
 # Run Pkg.instantiate() in Julia REPL and install JSON3 package
 
-# julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+# julia --project=. -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
 
 # Execute the Julia script with parameters
-# julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
+julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
