@@ -14,7 +14,7 @@ module load julia
 
 # Run Pkg.instantiate() in Julia REPL and install JSON3 package
 
-julia -e --project=. 'using Pkg; Pkg.instantiate()'
+julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 # Execute the Julia script with parameters
 julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
