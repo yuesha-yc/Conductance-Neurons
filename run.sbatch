@@ -10,6 +10,13 @@
 #SBATCH --output=/project/bdoiron/yichenw/out/job_output.%j.txt  # Standard output file
 #SBATCH --error=/project/bdoiron/yichenw/out/job_error.%j.err    # Standard error file
 
+
+# print job info
+echo "Job ID: $SLURM_JOB_ID"
+echo "Running on node: $(hostname)"
+echo "Time: $(date)"
+echo "Current directory: $(pwd)"
+
 # module load julia
 
 # Run Pkg.instantiate() in Julia REPL and install JSON3 package
