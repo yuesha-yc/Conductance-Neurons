@@ -12,5 +12,10 @@
 
 module load julia
 
+# Run Pkg.instantiate() in Julia REPL
+
+julia -e 'using Pkg; Pkg.instantiate()'
+
+
 # Execute the Julia script with parameters
 julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
