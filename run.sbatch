@@ -10,7 +10,7 @@
 #SBATCH --output=/gpfs/data/doiron-lab/yichen/out/job_output.%j.txt  # Standard output file
 #SBATCH --error=/gpfs/data/doiron-lab/yichen/out/job_error.%j.err    # Standard error file
 
-module load julia
+module load julia/1.11.6
 
 # Run Pkg.instantiate() in Julia REPL and install JSON3 package
 
