@@ -1,20 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=yichen            # Job name
-#SBATCH --account=doiron-lab               # Account under which to submit
-#SBATCH --partition=tier1q               # Partition/queue to submit to
+#SBATCH --job-name=conductance-neurons            # Job name
+#SBATCH --account=pi-bdoiron              # Account under which to submit
+#SBATCH --partition=voltron               # Partition/queue to submit to
+#SBATCH --qos=voltron
 #SBATCH --nodes=1                        # Number of nodes
 #SBATCH --ntasks-per-node=1              # Number of tasks per node
-#SBATCH --time=00:30:30                  # Time limit
+#SBATCH --time=02:00:00                  # Time limit
 #SBATCH --cpus-per-task=1               # Number of CPU cores per task
-#SBATCH --mem=80gb                      # Memory per node
-#SBATCH --output=/gpfs/data/doiron-lab/yichen/out/job_output.%j.txt  # Standard output file
-#SBATCH --error=/gpfs/data/doiron-lab/yichen/out/job_error.%j.err    # Standard error file
+#SBATCH --output=/project/bdoiron/yichenw/out/job_output.%j.txt  # Standard output file
+#SBATCH --error=/project/bdoiron/yichenw/out/job_error.%j.err    # Standard error file
 
-module load julia/1.11.6
+# module load julia
 
 # Run Pkg.instantiate() in Julia REPL and install JSON3 package
 
-julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+# julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 # Execute the Julia script with parameters
-julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
+# julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/single_lif/nu_x_realistic_candidate3.toml --local-threads 10
