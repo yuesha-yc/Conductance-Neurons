@@ -7,7 +7,7 @@ using Plots
 using Distributions
 using Base: @views
 
-using ..Analysis
+include("Analysis.jl"); using .Analysis
 
 export AbstractSimParams, SinParams, SingleConductanceLIF, make_params, simulate
 

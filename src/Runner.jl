@@ -5,7 +5,7 @@ using Dates, Printf, JSON3
 include("SimCore.jl"); using .SimCore
 include("Experiments.jl"); using .Experiments
 include("Sweeps.jl"); using .Sweeps
-include("Analysis.jl")
+include("Analysis.jl"); using .Analysis
 
 function usage()
     println("""
