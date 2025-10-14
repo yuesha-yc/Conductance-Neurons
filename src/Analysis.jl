@@ -1,5 +1,7 @@
 module Analysis
 
+export ExperimentHandle, mean_matched_ff, fano, fano_per_time, spike_counts_from_spike_density
+
 using JSON3, Random, Statistics
 
 function _json_to_data(x)
@@ -90,7 +92,54 @@ function mean_matched_ff(counts; nbins=20, n_reps=50, seed=0)
 end
 
 
+# 1) Fano factor from one set of counts (R trials) → scalar
+fano(counts::AbstractVector) = var(counts) / mean(counts)
 
+# 2) Fano factors per time (T×R array) → Vector of length T
+function fano_per_time(counts::AbstractMatrix)
+    [var(@view counts[t, :]) / mean(@view counts[t, :]) for t in axes(counts, 1)]
+end
 
+function spike_counts_from_spike_density(S, dt; window_size_ms=100)
+    """
+    Compute spike counts in sliding windows from spike density S (in kHz).
+    S: Vector{Float64} of spike density (in kHz)
+    dt: time step (in ms)
+    window_size_ms: window size (in ms)
+    returns: Vector{Float64} of spike counts per window
+    """
+    window_size = Int(window_size_ms / dt)
+    spike_counts = Float64[]
+    for start_idx in 1:window_size:(length(S) - window_size + 1)
+        @views window = S[start_idx:(start_idx + window_size - 1)]
+        spike_count = sum(window) * dt
+        push!(spike_counts, spike_count)
+    end
+    return spike_counts
+end
+
+function spike_counts_from_spike_density_per_time(S, dt, sliding_step_ms; window_size_ms=100)
+    """
+    Compute spike counts in sliding windows from spike density S (in kHz).
+    S: Vector{Float64} of spike density (in kHz)
+    dt: time step (in ms)
+    window_size_ms: window size (in ms)
+    sliding_step_ms: sliding step (in ms)
+    returns: Vector{Float64} of spike counts per every sliding step (length(S)/sliding_step)
+    """
+    window_size = Int(window_size_ms / dt)
+    sliding_step = Int(sliding_step_ms / dt)
+    N = length(S)
+    spike_counts = zeros(Float64, N)
+
+    for start_idx in 1:sliding_step:(N - window_size + 1)
+        @views window = S[start_idx:(start_idx + window_size - 1)]
+        spike_count = sum(window) * dt
+        spike_counts[start_idx] = spike_count
+    end
+
+    return spike_counts
+
+end
 
 end # module

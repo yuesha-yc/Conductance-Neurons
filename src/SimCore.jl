@@ -7,6 +7,8 @@ using Plots
 using Distributions
 using Base: @views
 
+using ..Analysis
+
 export AbstractSimParams, SinParams, SingleConductanceLIF, make_params, simulate
 
 """Marker supertype for all simulation parameter carriers."""
@@ -206,16 +208,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     I_tot_ss = I_tot[(burn_in_steps+1):end]
 
     # compute fano factor over 100 ms windows
-    window_size = Int(fano_window / dt)
-    spike_counts = Float64[]
-    for start_idx in 1:window_size:(length(S_ss) - window_size + 1)
-        @views window = S_ss[start_idx:(start_idx + window_size - 1)]
-        spike_count = sum(window) * dt
-        push!(spike_counts, spike_count)
-    end
-    mean_spike_count = mean(spike_counts)
-    var_spike_count  = var(spike_counts)
-    fano_factor = var_spike_count / mean_spike_count
+    spike_counts = spike_counts_from_spike_density(S_ss, dt; window_size_ms=100)
+    fano_factor = fano(spike_counts)
 
     # compute firing rate using S_ss spike density
     nu = mean(S_ss) * 1000.0  # in Hz
@@ -232,14 +226,14 @@ function single_conductance_lif(p::SingleConductanceLIF)
         # "S"=>S,
         # "S_e"=>S_e,
         # "S_i"=>S_i,
+        "fano_factor"=>fano_factor,
+        "nu"=>nu,
         "mean_V"=>mean(V_ss),
         "var_V"=>var(V_ss),
         "mean_g_e"=>mean(g_e_ss),
         "var_g_e"=>var(g_e_ss),
         "mean_g_i"=>mean(g_i_ss),
         "var_g_i"=>var(g_i_ss),
-        "fano_factor"=>fano_factor,
-        "nu"=>nu,
         "mean_I_e"=>mean(I_e_ss),
         "var_I_e"=>var(I_e_ss),
         "mean_I_i"=>mean(I_i_ss),
