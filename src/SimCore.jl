@@ -138,18 +138,15 @@ function single_conductance_lif(p::SingleConductanceLIF)
     V[1] = E_L
     g_e = zeros(N)
     g_i = zeros(N)
-    S   = zeros(N)  # spike density (δ(t) as 1/dt at spike times)
+    S   = zeros(N)  # post-synaptic spike density (in kHz)
 
     # -------------------------
-    # Generate spike densities S_e, S_i
+    # Generate presynaptic spike densities S_e, S_i
     # -------------------------
-
-    p_spike_e = K_e * r_e * dt # spike probability per time step
-    p_spike_i = K_i * r_i * dt
-    S_e = rand(N) .< p_spike_e # boolean spike mask
-    S_i = rand(N) .< p_spike_i
-    S_e = S_e .* (1 / dt) # scale spikes to delta-like values
-    S_i = S_i .* (1 / dt)
+    λ_e = K_e * r_e
+    λ_i = K_i * r_i
+    Poisson_e = Poisson(λ_e * dt)
+    Poisson_i = Poisson(λ_i * dt)
 
     # -------------------------
     # Time stepping
@@ -161,11 +158,15 @@ function single_conductance_lif(p::SingleConductanceLIF)
     invC = 1 / C
 
     @inbounds for n in 1:(N-1)
+        # Determine the presynaptic spike density at time step n 
+        s_e = rand(Poisson_e) / dt
+        s_i = rand(Poisson_i) / dt
+
         # conductance updates
         ge = g_e[n]
         gi = g_i[n]
-        g_e[n+1] = ge - decay_e * ge + drive_e * S_e[n]
-        g_i[n+1] = gi - decay_i * gi + drive_i * S_i[n]
+        g_e[n+1] = ge - decay_e * ge + drive_e * s_e
+        g_i[n+1] = gi - decay_i * gi + drive_i * s_i
 
         # refractory handling
         if refr_count > 0
@@ -214,18 +215,24 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # compute firing rate using S_ss spike density
     nu = mean(S_ss) * 1000.0  # in Hz
 
+    
+    # extract the last 1000 ms of data to save
+    V_short = V_ss[end-Int(1000/dt)+1:end]
+    g_e_short = g_e_ss[end-Int(1000/dt)+1:end]
+    g_i_short = g_i_ss[end-Int(1000/dt)+1:end]
+    I_e_short = I_e_ss[end-Int(1000/dt)+1:end]
+    I_i_short = I_i_ss[end-Int(1000/dt)+1:end]
+    I_tot_short = I_tot_ss[end-Int(1000/dt)+1:end]
+    time_vec = collect(0.0:dt:999.9)
 
     return Dict(
-        # "t"=>time_vec,
-        # "V"=>V,
-        # "g_e"=>g_e,
-        # "g_i"=>g_i,
-        # "I_e"=>I_e,
-        # "I_i"=>I_i,
-        # "I_tot"=>I_tot,
-        # "S"=>S,
-        # "S_e"=>S_e,
-        # "S_i"=>S_i,
+        "t"=>time_vec,
+        "V"=>V_short,
+        "g_e"=>g_e_short,
+        "g_i"=>g_i_short,
+        # "I_e"=>I_e_short,
+        # "I_i"=>I_i_short,
+        # "I_tot"=>I_tot_short,
         "fano_factor"=>fano_factor,
         "nu"=>nu,
         "mean_V"=>mean(V_ss),
@@ -280,5 +287,16 @@ end
 
 simulate(p::SinParams)::Dict{String,Any} = sin_waves(p)
 simulate(p::SingleConductanceLIF) = single_conductance_lif(p)
+
+
+# Utilities functions
+
+# Generate a Poisson spike density with constant rate λ over time interval [0, T] with time step dt
+function poisson_spike_density(λ::Float64, T::Float64, dt::Float64)
+    d = Poisson(λ * dt)
+    poisson_events = rand(d, round(Int, T/dt))
+    spike_density = poisson_events ./ dt
+    return spike_density
+end
 
 end # module
