@@ -55,8 +55,10 @@ Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     tau_ref::Float64 = 2.0  # ms
 
     # conductance synapse parameters
-    tau_e::Float64 = 5.0
-    tau_i::Float64 = 4.0
+    tau_e_decay::Float64 = 5.0
+    tau_i_decay::Float64 = 4.0
+    tau_e_rise::Float64 = 1.0
+    tau_i_rise::Float64 = 1.0
     E_i::Float64 = -80.0
     E_e::Float64 = 0.0
 
@@ -92,7 +94,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     g_L, E_L, C = p.g_L, p.E_L, p.C
     Vre, Vth = p.Vre, p.Vth
     tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt)); refr_count = 0
-    tau_e, tau_i = p.tau_e, p.tau_i
+    tau_e_decay, tau_i_decay = p.tau_e_decay, p.tau_i_decay
+    tau_e_rise, tau_i_rise = p.tau_e_rise, p.tau_i_rise
     E_e, E_i = p.E_e, p.E_i
     a, g = p.a, p.g
     j_e, j_i = a, a * g
@@ -107,10 +110,6 @@ function single_conductance_lif(p::SingleConductanceLIF)
     dI = Poisson(K_i * r_i * dt)
 
     # precompute constants
-    decay_e = dt / tau_e
-    decay_i = dt / tau_i
-    drive_e = dt * g_L * j_e
-    drive_i = dt * g_L * j_i
     invC = 1 / C
 
     # --- ring buffers for LAST 1000 ms ---
@@ -125,6 +124,10 @@ function single_conductance_lif(p::SingleConductanceLIF)
     V  = E_L
     ge = 0.0
     gi = 0.0
+    xe_rise = 0.0
+    xe_decay = 0.0
+    xi_rise = 0.0
+    xi_decay = 0.0
 
     # --- running stats via Welford (after burn-in) ---
     n_samp = 0
@@ -150,8 +153,12 @@ function single_conductance_lif(p::SingleConductanceLIF)
         s_i = rand(dI) / dt
 
         # conductances
-        ge = ge - decay_e * ge + drive_e * s_e
-        gi = gi - decay_i * gi + drive_i * s_i
+        xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
+        xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
+        xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
+        xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
+        ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
+        gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
 
         # refractory & spike reset
         S = 0.0
@@ -271,8 +278,8 @@ function single_conductance_lif_old(p::SingleConductanceLIF)
     ref_steps = Int(round(tau_ref / dt))
     refr_count = 0
 
-    tau_e = p.tau_e
-    tau_i = p.tau_i
+    tau_e = p.tau_e_decay
+    tau_i = p.tau_i_decay
     E_i = p.E_i
     E_e = p.E_e
 
