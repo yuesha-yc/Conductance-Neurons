@@ -42,6 +42,7 @@ Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     dt::Float64 = 0.1
     fano_window::Float64 = 100.0
     burn_in_time::Float64 = 2000.0
+    buffer_time::Float64 = 1000.0  # ms of data to keep in ring buffer
 
     # leaky neuron parameters
     g_L::Float64 = 1.0
@@ -104,6 +105,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     K_i = max(Int(gamma * K), 1)
     r_e = p.nu_x / 1000       # per ms
     r_i = p.eta * r_e         # per ms
+    fano_window = p.fano_window
+    buffer_time = p.buffer_time
 
     # Poisson dists
     dE = Poisson(K_e * r_e * dt)
@@ -112,8 +115,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     # precompute constants
     invC = 1 / C
 
-    # --- ring buffers for LAST 1000 ms ---
-    Wlast = Int(1000 / dt)
+    # --- ring buffers for LAST buffer_time ms ---
+    Wlast = Int(buffer_time / dt)
     t_last = collect(0.0:dt:((Wlast-1)*dt))  # small
     Vbuf  = fill(Float32(E_L), Wlast)
     gebuf = fill(Float32(0), Wlast)
@@ -134,6 +137,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
     mean_V = 0.0; M2_V = 0.0
     mean_ge = 0.0; M2_ge = 0.0
     mean_gi = 0.0; M2_gi = 0.0
+    mean_g0 = 0.0; M2_g0 = 0.0
     mean_Ie = 0.0; M2_Ie = 0.0
     mean_Ii = 0.0; M2_Ii = 0.0
     mean_It = 0.0; M2_It = 0.0
@@ -142,7 +146,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
     sum_S = 0.0
 
     # --- Fano factor via windowed counts over 100 ms ---
-    w = Int(100 / dt)
+    w = Int(fano_window / dt)
     step_in_win = 0
     acc_counts = 0.0
     counts = Float32[]  # length about (N - burn_in) / w
@@ -176,7 +180,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
         # after burn-in, update stats + windows
         if n > burn_in_steps
-            # ring buffers for last 1000 ms
+            # ring buffers for last buffer_time ms
             Vbuf[ring_idx]  = Float32(V)
             gebuf[ring_idx] = Float32(ge)
             gibuf[ring_idx] = Float32(gi)
@@ -198,6 +202,10 @@ function single_conductance_lif(p::SingleConductanceLIF)
             end
             let x = gi
                 δ = x - mean_gi; mean_gi += δ / n_samp; M2_gi += δ*(x - mean_gi)
+            end
+            # compute g0 = g_L + ge + gi
+            let x = ge + gi + g_L
+                δ = x - mean_g0; mean_g0 += δ / n_samp; M2_g0 += δ*(x - mean_g0)
             end
             let x = Ie
                 δ = x - mean_Ie; mean_Ie += δ / n_samp; M2_Ie += δ*(x - mean_Ie)
@@ -225,6 +233,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
     var_V  = n_samp > 1 ? M2_V  / (n_samp - 1) : 0.0
     var_ge = n_samp > 1 ? M2_ge / (n_samp - 1) : 0.0
     var_gi = n_samp > 1 ? M2_gi / (n_samp - 1) : 0.0
+    var_g0 = n_samp > 1 ? M2_g0 / (n_samp - 1) : 0.0
     var_Ie = n_samp > 1 ? M2_Ie / (n_samp - 1) : 0.0
     var_Ii = n_samp > 1 ? M2_Ii / (n_samp - 1) : 0.0
     var_It = n_samp > 1 ? M2_It / (n_samp - 1) : 0.0
@@ -241,16 +250,29 @@ function single_conductance_lif(p::SingleConductanceLIF)
             vcat(view(buf, ring_idx:Wlast), view(buf, 1:ring_idx-1))
     end
 
+    V_buf = unwrap(Vbuf)
+    gebuf = unwrap(gebuf)
+    gibuf = unwrap(gibuf)
+    
+    # precompute Ie, Ii, It buffers here
+    Ie_buf = .- gebuf .* (V_buf .- E_e)
+    Ii_buf = .- gibuf .* (V_buf .- E_i)
+    It_buf = Ie_buf .+ Ii_buf
+
     return Dict(
         "t" => t_last,
-        "V" => unwrap(Vbuf),
-        "g_e" => unwrap(gebuf),
-        "g_i" => unwrap(gibuf),
+        "V" => V_buf,
+        "g_e" => gebuf,
+        "g_i" => gibuf,
+        "I_e" => Ie_buf,
+        "I_i" => Ii_buf,
+        "I_tot" => It_buf,
         "fano_factor" => fano_factor,
         "nu" => nu,
         "mean_V" => mean_V, "var_V" => var_V,
         "mean_g_e" => mean_ge, "var_g_e" => var_ge,
         "mean_g_i" => mean_gi, "var_g_i" => var_gi,
+        "mean_g_0" => mean_g0, "var_g_0" => var_g0,
         "mean_I_e" => mean_Ie, "var_I_e" => var_Ie,
         "mean_I_i" => mean_Ii, "var_I_i" => var_Ii,
         "mean_I_tot" => mean_It, "var_I_tot" => var_It,

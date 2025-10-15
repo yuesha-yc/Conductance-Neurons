@@ -98,7 +98,7 @@ def plot_xy(trials, param_filter, x, y, l=None):
     plt.show()
 
 
-def plot_tv(trials, param_filter, t_key, v_key, l=None, x_show_ratio=0.01):
+def plot_tv(trials, param_filter, t_key, v_key, l=None, x_show_ratio=1.0):
     """
     Plot v(t) curves, averaged over matching trials.
     Each trial has arrays results[t_key] and results[v_key].
