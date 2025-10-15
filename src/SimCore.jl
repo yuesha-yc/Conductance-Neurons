@@ -84,6 +84,173 @@ function sin_waves(p::SinParams)::Dict{String,Any}
 end
 
 function single_conductance_lif(p::SingleConductanceLIF)
+    # --- unpack ---
+    t_0, T, dt = p.t_0, p.T, p.dt
+    burn_in_steps = Int(round(p.burn_in_time / dt))
+    N = Int(floor((T - t_0)/dt))
+
+    g_L, E_L, C = p.g_L, p.E_L, p.C
+    Vre, Vth = p.Vre, p.Vth
+    tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt)); refr_count = 0
+    tau_e, tau_i = p.tau_e, p.tau_i
+    E_e, E_i = p.E_e, p.E_i
+    a, g = p.a, p.g
+    j_e, j_i = a, a * g
+    K, gamma = p.K, p.gamma
+    K_e = max(K, 1)
+    K_i = max(Int(gamma * K), 1)
+    r_e = p.nu_x / 1000       # per ms
+    r_i = p.eta * r_e         # per ms
+
+    # Poisson dists
+    dE = Poisson(K_e * r_e * dt)
+    dI = Poisson(K_i * r_i * dt)
+
+    # precompute constants
+    decay_e = dt / tau_e
+    decay_i = dt / tau_i
+    drive_e = dt * g_L * j_e
+    drive_i = dt * g_L * j_i
+    invC = 1 / C
+
+    # --- ring buffers for LAST 1000 ms ---
+    Wlast = Int(1000 / dt)
+    t_last = collect(0.0:dt:((Wlast-1)*dt))  # small
+    Vbuf  = fill(Float32(E_L), Wlast)
+    gebuf = fill(Float32(0), Wlast)
+    gibuf = fill(Float32(0), Wlast)
+    ring_idx = 1
+
+    # --- state scalars (no full arrays) ---
+    V  = E_L
+    ge = 0.0
+    gi = 0.0
+
+    # --- running stats via Welford (after burn-in) ---
+    n_samp = 0
+    mean_V = 0.0; M2_V = 0.0
+    mean_ge = 0.0; M2_ge = 0.0
+    mean_gi = 0.0; M2_gi = 0.0
+    mean_Ie = 0.0; M2_Ie = 0.0
+    mean_Ii = 0.0; M2_Ii = 0.0
+    mean_It = 0.0; M2_It = 0.0
+
+    # --- firing rate (from spike density) ---
+    sum_S = 0.0
+
+    # --- Fano factor via windowed counts over 100 ms ---
+    w = Int(100 / dt)
+    step_in_win = 0
+    acc_counts = 0.0
+    counts = Float32[]  # length about (N - burn_in) / w
+
+    @inbounds for n in 1:N
+        # presynaptic densities
+        s_e = rand(dE) / dt
+        s_i = rand(dI) / dt
+
+        # conductances
+        ge = ge - decay_e * ge + drive_e * s_e
+        gi = gi - decay_i * gi + drive_i * s_i
+
+        # refractory & spike reset
+        S = 0.0
+        if refr_count > 0
+            V = Vre
+            refr_count -= 1
+        else
+            V = V + dt * invC * ( -g_L*(V - E_L) - ge*(V - E_e) - gi*(V - E_i) )
+            if V >= Vth
+                V = Vre
+                S = 1.0 / dt
+                refr_count = ref_steps
+            end
+        end
+
+        # after burn-in, update stats + windows
+        if n > burn_in_steps
+            # ring buffers for last 1000 ms
+            Vbuf[ring_idx]  = Float32(V)
+            gebuf[ring_idx] = Float32(ge)
+            gibuf[ring_idx] = Float32(gi)
+            ring_idx += 1
+            ring_idx > Wlast && (ring_idx = 1)
+
+            # instantaneous currents
+            Ie = -ge * (V - E_e)
+            Ii = -gi * (V - E_i)
+            It = Ie + Ii
+
+            # Welford updates
+            n_samp += 1
+            let x = V
+                δ = x - mean_V; mean_V += δ / n_samp; M2_V += δ*(x - mean_V)
+            end
+            let x = ge
+                δ = x - mean_ge; mean_ge += δ / n_samp; M2_ge += δ*(x - mean_ge)
+            end
+            let x = gi
+                δ = x - mean_gi; mean_gi += δ / n_samp; M2_gi += δ*(x - mean_gi)
+            end
+            let x = Ie
+                δ = x - mean_Ie; mean_Ie += δ / n_samp; M2_Ie += δ*(x - mean_Ie)
+            end
+            let x = Ii
+                δ = x - mean_Ii; mean_Ii += δ / n_samp; M2_Ii += δ*(x - mean_Ii)
+            end
+            let x = It
+                δ = x - mean_It; mean_It += δ / n_samp; M2_It += δ*(x - mean_It)
+            end
+
+            # rate and Fano (counts per 100 ms)
+            sum_S += S
+            acc_counts += S * dt     # S is 1/dt at spikes ⇒ S*dt is count increment
+            step_in_win += 1
+            if step_in_win == w
+                push!(counts, Float32(acc_counts))
+                acc_counts = 0.0
+                step_in_win = 0
+            end
+        end
+    end
+
+    # finalize stats
+    var_V  = n_samp > 1 ? M2_V  / (n_samp - 1) : 0.0
+    var_ge = n_samp > 1 ? M2_ge / (n_samp - 1) : 0.0
+    var_gi = n_samp > 1 ? M2_gi / (n_samp - 1) : 0.0
+    var_Ie = n_samp > 1 ? M2_Ie / (n_samp - 1) : 0.0
+    var_Ii = n_samp > 1 ? M2_Ii / (n_samp - 1) : 0.0
+    var_It = n_samp > 1 ? M2_It / (n_samp - 1) : 0.0
+
+    # Fano factor of window counts
+    fano_factor = isempty(counts) ? NaN : (var(counts) / mean(counts))
+
+    # firing rate (Hz)
+    nu = (sum_S / n_samp) * 1000.0
+
+    # unwrap ring buffers in chronological order
+    function unwrap(buf)
+        ring_idx == 1 ? copy(buf) :
+            vcat(view(buf, ring_idx:Wlast), view(buf, 1:ring_idx-1))
+    end
+
+    return Dict(
+        "t" => t_last,
+        "V" => unwrap(Vbuf),
+        "g_e" => unwrap(gebuf),
+        "g_i" => unwrap(gibuf),
+        "fano_factor" => fano_factor,
+        "nu" => nu,
+        "mean_V" => mean_V, "var_V" => var_V,
+        "mean_g_e" => mean_ge, "var_g_e" => var_ge,
+        "mean_g_i" => mean_gi, "var_g_i" => var_gi,
+        "mean_I_e" => mean_Ie, "var_I_e" => var_Ie,
+        "mean_I_i" => mean_Ii, "var_I_i" => var_Ii,
+        "mean_I_tot" => mean_It, "var_I_tot" => var_It,
+    )
+end
+
+function single_conductance_lif_old(p::SingleConductanceLIF)
 
     # Allocate all parameters from struct
     t_0 = p.t_0
