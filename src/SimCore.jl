@@ -123,6 +123,8 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
 
     # presynaptic correlation ratio
     c::Float64 = 0.5
+    c_e::Float64 = nothing
+    c_i::Float64 = nothing
     N_cells::Int = 2
 end
 
@@ -350,17 +352,26 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     r_i = p.eta * r_e         # per ms
     fano_window = p.fano_window
     buffer_time = p.buffer_time
-    c = p.c # correlation ratio
+    c_e = p.c_e # correlation ratio
+    c_i = p.c_i # correlation ratio
     N_cells = p.N_cells
     refr_count = fill(0, N_cells)
 
+    # if c_e or c_i is None, set it to p.c
+    if c_e === nothing
+        c_e = p.c
+    end
+    if c_i === nothing
+        c_i = p.c
+    end
+
     # Poisson dists
-    dE = Poisson(K_e * r_e * (1-c) * dt)
-    dI = Poisson(K_i * r_i * (1-c) * dt)
+    dE = Poisson(K_e * r_e * (1-c_e) * dt)
+    dI = Poisson(K_i * r_i * (1-c_i) * dt)
 
     # common input
-    dE_C = Poisson(K_e * r_e * c * dt)
-    dI_C = Poisson(K_i * r_i * c * dt)
+    dE_C = Poisson(K_e * r_e * c_e * dt)
+    dI_C = Poisson(K_i * r_i * c_i * dt)
 
     # precompute constants
     invC = 1 / C

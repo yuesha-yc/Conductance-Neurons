@@ -1,1 +1,1 @@
-julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/double_lif/nu_x_c.toml --local-threads 10
+julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/double_lif/nu_x_c_e_c_i.toml --local-threads 10
