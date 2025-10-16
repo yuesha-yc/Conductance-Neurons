@@ -123,6 +123,7 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
 
     # presynaptic correlation ratio
     c::Float64 = 0.5
+    N_cells::Int = 2
 end
 
 """Dummy sine wave generator standing in for a membrane potential time series."""
@@ -336,7 +337,7 @@ function double_conductance_lif(p::DoubleConductanceLIF)
 
     g_L, E_L, C = p.g_L, p.E_L, p.C
     Vre, Vth = p.Vre, p.Vth
-    tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt)); refr_count = 0
+    tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt))
     tau_e_decay, tau_i_decay = p.tau_e_decay, p.tau_i_decay
     tau_e_rise, tau_i_rise = p.tau_e_rise, p.tau_i_rise
     E_e, E_i = p.E_e, p.E_i
@@ -350,10 +351,16 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     fano_window = p.fano_window
     buffer_time = p.buffer_time
     c = p.c # correlation ratio
+    N_cells = p.N_cells
+    refr_count = fill(0, N_cells)
 
     # Poisson dists
-    dE = Poisson(K_e * r_e * dt)
-    dI = Poisson(K_i * r_i * dt)
+    dE = Poisson(K_e * r_e * (1-c) * dt)
+    dI = Poisson(K_i * r_i * (1-c) * dt)
+
+    # common input
+    dE_C = Poisson(K_e * r_e * c * dt)
+    dI_C = Poisson(K_i * r_i * c * dt)
 
     # precompute constants
     invC = 1 / C
@@ -361,156 +368,198 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     # --- ring buffers for LAST buffer_time ms ---
     Wlast = Int(buffer_time / dt)
     t_last = collect(0.0:dt:((Wlast-1)*dt))  # small
-    Vbuf  = fill(Float32(E_L), Wlast)
-    gebuf = fill(Float32(0), Wlast)
-    gibuf = fill(Float32(0), Wlast)
-    ring_idx = 1
+    Vbuf  = fill(Float32(E_L), (N_cells, Wlast))
+    gebuf = fill(Float32(0), (N_cells, Wlast))
+    gibuf = fill(Float32(0), (N_cells, Wlast))
+    ring_idx = fill(1, N_cells)
 
-    # --- state scalars (no full arrays) ---
-    V  = E_L
-    ge = 0.0
-    gi = 0.0
-    xe_rise = 0.0
-    xe_decay = 0.0
-    xi_rise = 0.0
-    xi_decay = 0.0
+    # --- state arrays ---
+    V  = fill(E_L, N_cells)
+    ge = fill(0.0, N_cells)
+    gi = fill(0.0, N_cells)
+    xe_rise = fill(0.0, N_cells)
+    xe_decay = fill(0.0, N_cells)
+    xi_rise = fill(0.0, N_cells)
+    xi_decay = fill(0.0, N_cells)
 
     # --- running stats via Welford (after burn-in) ---
-    n_samp = 0
-    mean_V = 0.0; M2_V = 0.0
-    mean_ge = 0.0; M2_ge = 0.0
-    mean_gi = 0.0; M2_gi = 0.0
-    mean_g0 = 0.0; M2_g0 = 0.0
-    mean_Ie = 0.0; M2_Ie = 0.0
-    mean_Ii = 0.0; M2_Ii = 0.0
-    mean_It = 0.0; M2_It = 0.0
+    n_samp = fill(0.0, N_cells)
+    # transform to fill(0.0, N_cells)
+    mean_V = fill(0.0, N_cells); M2_V = fill(0.0, N_cells)
+    mean_ge = fill(0.0, N_cells); M2_ge = fill(0.0, N_cells)
+    mean_gi = fill(0.0, N_cells); M2_gi = fill(0.0, N_cells)
+    mean_g0 = fill(0.0, N_cells); M2_g0 = fill(0.0, N_cells)
+    mean_Ie = fill(0.0, N_cells); M2_Ie = fill(0.0, N_cells)
+    mean_Ii = fill(0.0, N_cells); M2_Ii = fill(0.0, N_cells)
+    mean_It = fill(0.0, N_cells); M2_It = fill(0.0, N_cells)
 
     # --- firing rate (from spike density) ---
-    sum_S = 0.0
+    sum_S = fill(0.0, N_cells)
 
     # --- Fano factor via windowed counts over 100 ms ---
     w = Int(fano_window / dt)
-    step_in_win = 0
-    acc_counts = 0.0
-    counts = Float32[]  # length about (N - burn_in) / w
+    step_in_win = fill(0, N_cells)
+    acc_counts = fill(0.0, N_cells)
+    # length about (N - burn_in) / w
+    # track both neurons using N_cells
+    counts = [Float32[] for _ in 1:N_cells]
 
     @inbounds for n in 1:N
-        # presynaptic densities
-        s_e = rand(dE) / dt
-        s_i = rand(dI) / dt
+        s_e_ind = rand(dE, N_cells) ./ dt
+        s_i_ind = rand(dI, N_cells) ./ dt
+        s_e_c = rand(dE_C) / dt
+        s_i_c = rand(dI_C) / dt
 
-        # conductances
-        xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
-        xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
-        xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
-        xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
-        ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
-        gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
+        for i in 1:N_cells
+            s_e = s_e_ind[i] + s_e_c
+            s_i = s_i_ind[i] + s_i_c
 
-        # refractory & spike reset
-        S = 0.0
-        if refr_count > 0
-            V = Vre
-            refr_count -= 1
-        else
-            V = V + dt * invC * ( -g_L*(V - E_L) - ge*(V - E_e) - gi*(V - E_i) )
-            if V >= Vth
-                V = Vre
-                S = 1.0 / dt
-                refr_count = ref_steps
-            end
-        end
+            # conductances
+            xe_rise[i] += - dt * xe_rise[i] / tau_e_rise + dt * s_e * j_e
+            xe_decay[i] += - dt * xe_decay[i] / tau_e_decay + dt * s_e * j_e
+            xi_rise[i] += - dt * xi_rise[i] / tau_i_rise + dt * s_i * j_i
+            xi_decay[i] += - dt * xi_decay[i] / tau_i_decay + dt * s_i * j_i
+            ge[i] = (xe_decay[i] - xe_rise[i]) / (tau_e_decay - tau_e_rise)
+            gi[i] = (xi_decay[i] - xi_rise[i]) / (tau_i_decay - tau_i_rise)
 
-        # after burn-in, update stats + windows
-        if n > burn_in_steps
-            # ring buffers for last buffer_time ms
-            Vbuf[ring_idx]  = Float32(V)
-            gebuf[ring_idx] = Float32(ge)
-            gibuf[ring_idx] = Float32(gi)
-            ring_idx += 1
-            ring_idx > Wlast && (ring_idx = 1)
-
-            # instantaneous currents
-            Ie = -ge * (V - E_e)
-            Ii = -gi * (V - E_i)
-            It = Ie + Ii
-
-            # Welford updates
-            n_samp += 1
-            let x = V
-                δ = x - mean_V; mean_V += δ / n_samp; M2_V += δ*(x - mean_V)
-            end
-            let x = ge
-                δ = x - mean_ge; mean_ge += δ / n_samp; M2_ge += δ*(x - mean_ge)
-            end
-            let x = gi
-                δ = x - mean_gi; mean_gi += δ / n_samp; M2_gi += δ*(x - mean_gi)
-            end
-            # compute g0 = g_L + ge + gi
-            let x = ge + gi + g_L
-                δ = x - mean_g0; mean_g0 += δ / n_samp; M2_g0 += δ*(x - mean_g0)
-            end
-            let x = Ie
-                δ = x - mean_Ie; mean_Ie += δ / n_samp; M2_Ie += δ*(x - mean_Ie)
-            end
-            let x = Ii
-                δ = x - mean_Ii; mean_Ii += δ / n_samp; M2_Ii += δ*(x - mean_Ii)
-            end
-            let x = It
-                δ = x - mean_It; mean_It += δ / n_samp; M2_It += δ*(x - mean_It)
+            # refractory & spike reset
+            S = 0.0
+            if refr_count[i] > 0
+                V[i] = Vre
+                refr_count[i] -= 1
+            else
+                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V[i] - E_e) - gi[i]*(V[i] - E_i) )
+                if V[i] >= Vth
+                    V[i] = Vre
+                    S = 1.0 / dt
+                    refr_count[i] = ref_steps
+                end
             end
 
-            # rate and Fano (counts per 100 ms)
-            sum_S += S
-            acc_counts += S * dt     # S is 1/dt at spikes ⇒ S*dt is count increment
-            step_in_win += 1
-            if step_in_win == w
-                push!(counts, Float32(acc_counts))
-                acc_counts = 0.0
-                step_in_win = 0
+            # after burn-in, update stats + windows
+            if n > burn_in_steps
+                # ring buffers for last buffer_time ms
+                Vbuf[i,ring_idx[i]]  = Float32(V[i])
+                gebuf[i,ring_idx[i]] = Float32(ge[i])
+                gibuf[i,ring_idx[i]] = Float32(gi[i])
+                ring_idx[i] += 1
+                ring_idx[i] > Wlast && (ring_idx[i] = 1)
+
+                # instantaneous currents
+                Ie = -ge[i] * (V[i] - E_e)
+                Ii = -gi[i] * (V[i] - E_i)
+                It = Ie + Ii
+                g0 = ge[i] + gi[i] + g_L
+
+                # Welford updates
+                n_samp[i] += 1
+                let x = V[i]
+                    δ = x - mean_V[i]; mean_V[i] += δ / n_samp[i]; M2_V[i] += δ*(x - mean_V[i])
+                end
+                let x = ge[i]
+                    δ = x - mean_ge[i]; mean_ge[i] += δ / n_samp[i]; M2_ge[i] += δ*(x - mean_ge[i])
+                end
+                let x = gi[i]
+                    δ = x - mean_gi[i]; mean_gi[i] += δ / n_samp[i]; M2_gi[i] += δ*(x - mean_gi[i])
+                end
+                let x = g0
+                    δ = x - mean_g0[i]; mean_g0[i] += δ / n_samp[i]; M2_g0[i] += δ*(x - mean_g0[i])
+                end
+                let x = Ie
+                    δ = x - mean_Ie[i]; mean_Ie[i] += δ / n_samp[i]; M2_Ie[i] += δ*(x - mean_Ie[i])
+                end
+                let x = Ii
+                    δ = x - mean_Ii[i]; mean_Ii[i] += δ / n_samp[i]; M2_Ii[i] += δ*(x - mean_Ii[i])
+                end
+                let x = It
+                    δ = x - mean_It[i]; mean_It[i] += δ / n_samp[i]; M2_It[i] += δ*(x - mean_It[i])
+                end
+
+                # rate and Fano (counts per 100 ms)
+                sum_S[i] += S
+                acc_counts[i] += S * dt     # S is 1/dt at spikes ⇒ S*dt is count increment
+                step_in_win[i] += 1
+                if step_in_win[i] == w
+                    push!(counts[i], Float32(acc_counts[i]))
+                    acc_counts[i] = 0.0
+                    step_in_win[i] = 0
+                end
             end
         end
     end
 
     # finalize stats
-    var_V  = n_samp > 1 ? M2_V  / (n_samp - 1) : 0.0
-    var_ge = n_samp > 1 ? M2_ge / (n_samp - 1) : 0.0
-    var_gi = n_samp > 1 ? M2_gi / (n_samp - 1) : 0.0
-    var_g0 = n_samp > 1 ? M2_g0 / (n_samp - 1) : 0.0
-    var_Ie = n_samp > 1 ? M2_Ie / (n_samp - 1) : 0.0
-    var_Ii = n_samp > 1 ? M2_Ii / (n_samp - 1) : 0.0
-    var_It = n_samp > 1 ? M2_It / (n_samp - 1) : 0.0
+    var_V = fill(0.0, N_cells)
+    var_ge = fill(0.0, N_cells)
+    var_gi = fill(0.0, N_cells)
+    var_g0 = fill(0.0, N_cells)
+    var_Ie = fill(0.0, N_cells)
+    var_Ii = fill(0.0, N_cells)
+    var_It = fill(0.0, N_cells)
+    fano_factor = fill(NaN, N_cells)
+    nu = fill(0.0, N_cells)
 
-    # Fano factor of window counts
-    fano_factor = isempty(counts) ? NaN : (var(counts) / mean(counts))
+    for i in 1:N_cells
+        var_V[i]  = n_samp[i] > 1 ? M2_V[i]  / (n_samp[i] - 1) : 0.0
+        var_ge[i] = n_samp[i] > 1 ? M2_ge[i] / (n_samp[i] - 1) : 0.0
+        var_gi[i] = n_samp[i] > 1 ? M2_gi[i] / (n_samp[i] - 1) : 0.0
+        var_g0[i] = n_samp[i] > 1 ? M2_g0[i] / (n_samp[i] - 1) : 0.0
+        var_Ie[i] = n_samp[i] > 1 ? M2_Ie[i] / (n_samp[i] - 1) : 0.0
+        var_Ii[i] = n_samp[i] > 1 ? M2_Ii[i] / (n_samp[i] - 1) : 0.0
+        var_It[i] = n_samp[i] > 1 ? M2_It[i] / (n_samp[i] - 1) : 0.0
 
-    # firing rate (Hz)
-    nu = (sum_S / n_samp) * 1000.0
+        # Fano factor of window counts
+        fano_factor[i] = isempty(counts[i]) ? NaN : (var(counts[i]) / mean(counts[i]))
 
-    # unwrap ring buffers in chronological order
-    function unwrap(buf)
-        ring_idx == 1 ? copy(buf) :
-            vcat(view(buf, ring_idx:Wlast), view(buf, 1:ring_idx-1))
+        # firing rate (Hz)
+        nu[i] = (sum_S[i] / n_samp[i]) * 1000.0
+    end
+
+    # compute co fano factor: cov(A,B) / sqrt(mean(A)*mean(B))
+    # only if both have spikes
+    co_fano_factor = if N_cells == 2 && all(!isempty, counts)
+        cff(hcat(counts...)')
+    else
+        NaN
+    end
+
+    # print co fano factor
+    @printf("Co Fano Factor: %.4f\n", co_fano_factor)
+
+    # now unwrap should be different, since now Vbuf is N_cells x Wlast
+    function unwrap(buf::Array{Float32,2})
+        out = Array{Float32,2}(undef, size(buf))
+        for i in 1:size(buf,1)
+            if ring_idx[i] == 1
+                out[i, :] = buf[i, :]
+            else
+                out[i, :] = vcat(view(buf[i, :], ring_idx[i]:Wlast), view(buf[i, :], 1:ring_idx[i]-1))
+            end
+        end
+        return out
     end
 
     V_buf = unwrap(Vbuf)
-    gebuf = unwrap(gebuf)
-    gibuf = unwrap(gibuf)
+    ge_buf = unwrap(gebuf)
+    gi_buf = unwrap(gibuf)
     
     # precompute Ie, Ii, It buffers here
-    Ie_buf = .- gebuf .* (V_buf .- E_e)
-    Ii_buf = .- gibuf .* (V_buf .- E_i)
+    Ie_buf = .- ge_buf .* (V_buf .- E_e)
+    Ii_buf = .- gi_buf .* (V_buf .- E_i)
     It_buf = Ie_buf .+ Ii_buf
+    g0_buf = ge_buf .+ gi_buf .+ g_L
 
     return Dict(
         "t" => t_last,
         "V" => V_buf,
-        "g_e" => gebuf,
-        "g_i" => gibuf,
+        "g_e" => ge_buf,
+        "g_i" => gi_buf,
+        "g_0" => g0_buf,
         "I_e" => Ie_buf,
         "I_i" => Ii_buf,
         "I_tot" => It_buf,
         "fano_factor" => fano_factor,
+        "co_fano_factor" => co_fano_factor,
         "nu" => nu,
         "mean_V" => mean_V, "var_V" => var_V,
         "mean_g_e" => mean_ge, "var_g_e" => var_ge,
@@ -741,6 +790,14 @@ function poisson_spike_density(λ::Float64, T::Float64, dt::Float64)
     poisson_events = rand(d, round(Int, T/dt))
     spike_density = poisson_events ./ dt
     return spike_density
+end
+
+function cff(counts::AbstractMatrix)
+    @assert size(counts, 1) == 2 "counts must be 2 x n_bins"
+    n1, n2 = counts[1, :], counts[2, :]
+    mean1, mean2 = mean(n1), mean(n2)
+    cov12 = cov(n1, n2)           # covariance across bins
+    return cov12 / sqrt(mean1 * mean2)
 end
 
 end # module
