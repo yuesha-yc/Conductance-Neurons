@@ -28,11 +28,10 @@ Base.@kwdef struct SinParams <: AbstractSimParams
     note::String = ""
 end
 
-"""Placeholder parameter carrier for the single-conductance LIF model."""
 Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     # general parameters
     seed::Int = 0
-    model::String = "sin_waves"
+    model::String = "single_conductance_lif"
     save_downsampled::Bool = false
     note::String = ""
 
@@ -76,6 +75,56 @@ Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     nu_x::Float64 = 10.0
 end
 
+Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
+    # general parameters
+    seed::Int = 0
+    model::String = "double_conductance_lif"
+    save_downsampled::Bool = false
+    note::String = ""
+
+    # time parameters
+    t_0::Float64 = 0.0
+    T::Float64 = 12000.0
+    dt::Float64 = 0.1
+    fano_window::Float64 = 100.0
+    burn_in_time::Float64 = 2000.0
+    buffer_time::Float64 = 1000.0  # ms of data to keep in ring buffer
+
+    # leaky neuron parameters
+    g_L::Float64 = 1.0
+    E_L::Float64 = -70.0
+    C::Float64 = 2.0
+    tau_m::Float64 = C / g_L
+
+    # spiking parameters
+    Vre::Float64 = -60.0
+    Vth::Float64 = -54.0
+    tau_ref::Float64 = 2.0  # ms
+
+    # conductance synapse parameters
+    tau_e_decay::Float64 = 5.0
+    tau_i_decay::Float64 = 4.0
+    tau_e_rise::Float64 = 1.0
+    tau_i_rise::Float64 = 1.0
+    E_i::Float64 = -80.0
+    E_e::Float64 = 0.0
+
+    # synaptic efficacies
+    g::Float64 = 0.3
+    a::Float64 = 0.04
+
+    # synapse counts
+    K::Int = 400
+    gamma::Int = 5
+
+    # presynaptic firing rates (Hz -> per ms)
+    eta::Float64 = 1.5
+    nu_x::Float64 = 10.0
+
+    # presynaptic correlation ratio
+    c::Float64 = 0.5
+end
+
 """Dummy sine wave generator standing in for a membrane potential time series."""
 function sin_waves(p::SinParams)::Dict{String,Any}
     n = Int(floor(p.T / p.dt))
@@ -107,6 +156,200 @@ function single_conductance_lif(p::SingleConductanceLIF)
     r_i = p.eta * r_e         # per ms
     fano_window = p.fano_window
     buffer_time = p.buffer_time
+
+    # Poisson dists
+    dE = Poisson(K_e * r_e * dt)
+    dI = Poisson(K_i * r_i * dt)
+
+    # precompute constants
+    invC = 1 / C
+
+    # --- ring buffers for LAST buffer_time ms ---
+    Wlast = Int(buffer_time / dt)
+    t_last = collect(0.0:dt:((Wlast-1)*dt))  # small
+    Vbuf  = fill(Float32(E_L), Wlast)
+    gebuf = fill(Float32(0), Wlast)
+    gibuf = fill(Float32(0), Wlast)
+    ring_idx = 1
+
+    # --- state scalars (no full arrays) ---
+    V  = E_L
+    ge = 0.0
+    gi = 0.0
+    xe_rise = 0.0
+    xe_decay = 0.0
+    xi_rise = 0.0
+    xi_decay = 0.0
+
+    # --- running stats via Welford (after burn-in) ---
+    n_samp = 0
+    mean_V = 0.0; M2_V = 0.0
+    mean_ge = 0.0; M2_ge = 0.0
+    mean_gi = 0.0; M2_gi = 0.0
+    mean_g0 = 0.0; M2_g0 = 0.0
+    mean_Ie = 0.0; M2_Ie = 0.0
+    mean_Ii = 0.0; M2_Ii = 0.0
+    mean_It = 0.0; M2_It = 0.0
+
+    # --- firing rate (from spike density) ---
+    sum_S = 0.0
+
+    # --- Fano factor via windowed counts over 100 ms ---
+    w = Int(fano_window / dt)
+    step_in_win = 0
+    acc_counts = 0.0
+    counts = Float32[]  # length about (N - burn_in) / w
+
+    @inbounds for n in 1:N
+        # presynaptic densities
+        s_e = rand(dE) / dt
+        s_i = rand(dI) / dt
+
+        # conductances
+        xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
+        xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
+        xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
+        xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
+        ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
+        gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
+
+        # refractory & spike reset
+        S = 0.0
+        if refr_count > 0
+            V = Vre
+            refr_count -= 1
+        else
+            V = V + dt * invC * ( -g_L*(V - E_L) - ge*(V - E_e) - gi*(V - E_i) )
+            if V >= Vth
+                V = Vre
+                S = 1.0 / dt
+                refr_count = ref_steps
+            end
+        end
+
+        # after burn-in, update stats + windows
+        if n > burn_in_steps
+            # ring buffers for last buffer_time ms
+            Vbuf[ring_idx]  = Float32(V)
+            gebuf[ring_idx] = Float32(ge)
+            gibuf[ring_idx] = Float32(gi)
+            ring_idx += 1
+            ring_idx > Wlast && (ring_idx = 1)
+
+            # instantaneous currents
+            Ie = -ge * (V - E_e)
+            Ii = -gi * (V - E_i)
+            It = Ie + Ii
+
+            # Welford updates
+            n_samp += 1
+            let x = V
+                δ = x - mean_V; mean_V += δ / n_samp; M2_V += δ*(x - mean_V)
+            end
+            let x = ge
+                δ = x - mean_ge; mean_ge += δ / n_samp; M2_ge += δ*(x - mean_ge)
+            end
+            let x = gi
+                δ = x - mean_gi; mean_gi += δ / n_samp; M2_gi += δ*(x - mean_gi)
+            end
+            # compute g0 = g_L + ge + gi
+            let x = ge + gi + g_L
+                δ = x - mean_g0; mean_g0 += δ / n_samp; M2_g0 += δ*(x - mean_g0)
+            end
+            let x = Ie
+                δ = x - mean_Ie; mean_Ie += δ / n_samp; M2_Ie += δ*(x - mean_Ie)
+            end
+            let x = Ii
+                δ = x - mean_Ii; mean_Ii += δ / n_samp; M2_Ii += δ*(x - mean_Ii)
+            end
+            let x = It
+                δ = x - mean_It; mean_It += δ / n_samp; M2_It += δ*(x - mean_It)
+            end
+
+            # rate and Fano (counts per 100 ms)
+            sum_S += S
+            acc_counts += S * dt     # S is 1/dt at spikes ⇒ S*dt is count increment
+            step_in_win += 1
+            if step_in_win == w
+                push!(counts, Float32(acc_counts))
+                acc_counts = 0.0
+                step_in_win = 0
+            end
+        end
+    end
+
+    # finalize stats
+    var_V  = n_samp > 1 ? M2_V  / (n_samp - 1) : 0.0
+    var_ge = n_samp > 1 ? M2_ge / (n_samp - 1) : 0.0
+    var_gi = n_samp > 1 ? M2_gi / (n_samp - 1) : 0.0
+    var_g0 = n_samp > 1 ? M2_g0 / (n_samp - 1) : 0.0
+    var_Ie = n_samp > 1 ? M2_Ie / (n_samp - 1) : 0.0
+    var_Ii = n_samp > 1 ? M2_Ii / (n_samp - 1) : 0.0
+    var_It = n_samp > 1 ? M2_It / (n_samp - 1) : 0.0
+
+    # Fano factor of window counts
+    fano_factor = isempty(counts) ? NaN : (var(counts) / mean(counts))
+
+    # firing rate (Hz)
+    nu = (sum_S / n_samp) * 1000.0
+
+    # unwrap ring buffers in chronological order
+    function unwrap(buf)
+        ring_idx == 1 ? copy(buf) :
+            vcat(view(buf, ring_idx:Wlast), view(buf, 1:ring_idx-1))
+    end
+
+    V_buf = unwrap(Vbuf)
+    gebuf = unwrap(gebuf)
+    gibuf = unwrap(gibuf)
+    
+    # precompute Ie, Ii, It buffers here
+    Ie_buf = .- gebuf .* (V_buf .- E_e)
+    Ii_buf = .- gibuf .* (V_buf .- E_i)
+    It_buf = Ie_buf .+ Ii_buf
+
+    return Dict(
+        "t" => t_last,
+        "V" => V_buf,
+        "g_e" => gebuf,
+        "g_i" => gibuf,
+        "I_e" => Ie_buf,
+        "I_i" => Ii_buf,
+        "I_tot" => It_buf,
+        "fano_factor" => fano_factor,
+        "nu" => nu,
+        "mean_V" => mean_V, "var_V" => var_V,
+        "mean_g_e" => mean_ge, "var_g_e" => var_ge,
+        "mean_g_i" => mean_gi, "var_g_i" => var_gi,
+        "mean_g_0" => mean_g0, "var_g_0" => var_g0,
+        "mean_I_e" => mean_Ie, "var_I_e" => var_Ie,
+        "mean_I_i" => mean_Ii, "var_I_i" => var_Ii,
+        "mean_I_tot" => mean_It, "var_I_tot" => var_It,
+    )
+end
+
+function double_conductance_lif(p::DoubleConductanceLIF)
+    # --- unpack ---
+    t_0, T, dt = p.t_0, p.T, p.dt
+    burn_in_steps = Int(round(p.burn_in_time / dt))
+    N = Int(floor((T - t_0)/dt))
+
+    g_L, E_L, C = p.g_L, p.E_L, p.C
+    Vre, Vth = p.Vre, p.Vth
+    tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt)); refr_count = 0
+    tau_e_decay, tau_i_decay = p.tau_e_decay, p.tau_i_decay
+    tau_e_rise, tau_i_rise = p.tau_e_rise, p.tau_i_rise
+    E_e, E_i = p.E_e, p.E_i
+    a, g = p.a, p.g
+    j_e, j_i = a, a * g
+    K, gamma = p.K, p.gamma
+    K_e = max(K, 1)
+    K_i = max(Int(gamma * K), 1)
+    r_e = p.nu_x / 1000       # per ms
+    r_i = p.eta * r_e         # per ms
+    fano_window = p.fano_window
+    buffer_time = p.buffer_time
+    c = p.c # correlation ratio
 
     # Poisson dists
     dE = Poisson(K_e * r_e * dt)
@@ -466,6 +709,10 @@ function make_params(::Val{:single_conductance_lif}, params::NamedTuple)::Single
     return SingleConductanceLIF(; params...)
 end
 
+function make_params(::Val{:double_conductance_lif}, params::NamedTuple)::DoubleConductanceLIF
+    return DoubleConductanceLIF(; params...)
+end
+
 function make_params(::Val{model}, params::NamedTuple)::AbstractSimParams where {model}
     error("Unsupported simulation model: $(model)")
 end
@@ -483,6 +730,7 @@ end
 
 simulate(p::SinParams)::Dict{String,Any} = sin_waves(p)
 simulate(p::SingleConductanceLIF) = single_conductance_lif(p)
+simulate(p::DoubleConductanceLIF) = double_conductance_lif(p)
 
 
 # Utilities functions
