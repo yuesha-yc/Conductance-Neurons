@@ -1,0 +1,59 @@
+[experiment]
+title = "Single-conductance nu_x sweep"
+description = "Linear grid over nu_x with SingleConductanceLIF defaults."
+base_seed = 0
+
+[defaults]
+t_0 = 0.0
+T = 50000000
+dt = 0.1
+fano_window = 100
+burn_in_time = 20000.0
+buffer_time = 10000.0
+g_L = 1.0
+E_L = -75.3
+C = 15.0
+tau_m = 15.0
+Vre = -60.0
+Vth = -54.0
+tau_ref = 2.0
+tau_e_decay = 3.0
+tau_i_decay = 2.0
+tau_e_rise = 1.0
+tau_i_rise = 1.0
+E_i = -70.0
+E_e = 10
+g = 0.5
+a = 1.0
+K = 1
+gamma = 1
+eta = 6
+
+[fixed]
+model = "single_conductance_lif"
+save_downsampled = false
+note = ""
+
+[grid]
+# 100 to 1500 in 20 steps
+nu_x = [100,
+ 170,
+ 240,
+ 310,
+ 380,
+ 450,
+ 520,
+ 590,
+ 660,
+ 730,
+ 800,
+ 870,
+ 940,
+ 1010,
+ 1080,
+ 1150,
+ 1220,
+ 1290,
+ 1360,
+ 1430,
+ 1500]
