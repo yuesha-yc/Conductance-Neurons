@@ -332,6 +332,16 @@ function single_conductance_lif(p::SingleConductanceLIF)
 end
 
 function double_conductance_lif(p::DoubleConductanceLIF)
+    # random number generators
+    # ensures different random sequences
+    seed = p.seed
+    master = MersenneTwister(seed)
+    mk() = MersenneTwister(rand(master, UInt))  # derive independent sub-seeds
+    ind_e_rng = mk()  # independent E only
+    ind_i_rng = mk()  # independent I only
+    sh_e_rng = mk()   # shared E only
+    sh_i_rng = mk()   # shared I only
+
     # --- unpack ---
     t_0, T, dt = p.t_0, p.T, p.dt
     burn_in_steps = Int(round(p.burn_in_time / dt))
@@ -364,6 +374,11 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     if c_i === nothing
         c_i = p.c
     end
+
+    @assert 0.0 ≤ c_e ≤ 1.0 "c_e must be in [0,1]"
+    @assert 0.0 ≤ c_i ≤ 1.0 "c_i must be in [0,1]"
+    @assert tau_e_decay != tau_e_rise "tau_e_decay must differ from tau_e_rise"
+    @assert tau_i_decay != tau_i_rise "tau_i_decay must differ from tau_i_rise"
 
     # Poisson dists
     dE = Poisson(K_e * r_e * (1-c_e) * dt)
@@ -416,10 +431,10 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     counts = [Float32[] for _ in 1:N_cells]
 
     @inbounds for n in 1:N
-        s_e_ind = rand(dE, N_cells) ./ dt
-        s_i_ind = rand(dI, N_cells) ./ dt
-        s_e_c = rand(dE_C) / dt
-        s_i_c = rand(dI_C) / dt
+        s_e_ind = rand(ind_e_rng, dE, N_cells) ./ dt
+        s_i_ind = rand(ind_i_rng, dI, N_cells) ./ dt
+        s_e_c = rand(sh_e_rng, dE_C) / dt
+        s_i_c = rand(sh_i_rng, dI_C) / dt
 
         for i in 1:N_cells
             s_e = s_e_ind[i] + s_e_c
@@ -520,7 +535,12 @@ function double_conductance_lif(p::DoubleConductanceLIF)
         var_It[i] = n_samp[i] > 1 ? M2_It[i] / (n_samp[i] - 1) : 0.0
 
         # Fano factor of window counts
-        fano_factor[i] = isempty(counts[i]) ? NaN : (var(counts[i]) / mean(counts[i]))
+        if isempty(counts[i])
+            fano_factor[i] = NaN
+        else
+            μ = mean(counts[i])
+            fano_factor[i] = μ > 0 ? var(counts[i]) / μ : NaN
+        end
 
         # firing rate (Hz)
         nu[i] = (sum_S[i] / n_samp[i]) * 1000.0
@@ -535,7 +555,7 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     end
 
     # print co fano factor
-    @printf("Co Fano Factor: %.4f\n", co_fano_factor)
+    # @printf("Co Fano Factor: %.4f\n", co_fano_factor)
 
     # now unwrap should be different, since now Vbuf is N_cells x Wlast
     function unwrap(buf::Array{Float32,2})
@@ -807,8 +827,13 @@ function cff(counts::AbstractMatrix)
     @assert size(counts, 1) == 2 "counts must be 2 x n_bins"
     n1, n2 = counts[1, :], counts[2, :]
     mean1, mean2 = mean(n1), mean(n2)
+    if mean1 ≤ 0 || mean2 ≤ 0
+        return NaN
+    end
     cov12 = cov(n1, n2)           # covariance across bins
     return cov12 / sqrt(mean1 * mean2)
 end
+
+
 
 end # module
