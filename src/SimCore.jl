@@ -126,6 +126,11 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
     c_e::Float64 = nothing
     c_i::Float64 = nothing
     N_cells::Int = 2
+    V_avg::Float64 = -70
+    # do V_avg, a boolean
+    do_V_avg::Bool = false
+    V_avgs::Vector{Float64} = []
+    V_avg_controls::Vector{Float64} = []
 end
 
 """Dummy sine wave generator standing in for a membrane potential time series."""
@@ -332,6 +337,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
 end
 
 function double_conductance_lif(p::DoubleConductanceLIF)
+
     # random number generators
     # ensures different random sequences
     seed = p.seed
@@ -366,6 +372,19 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     c_i = p.c_i # correlation ratio
     N_cells = p.N_cells
     refr_count = fill(0, N_cells)
+
+    # use averaged V for conductance currents
+    do_V_avg = p.do_V_avg
+    V_avg = p.V_avg
+    V_avgs = p.V_avgs
+    V_avg_controls = p.V_avg_controls
+    for k in 1:size(V_avg_controls, 1)
+        if V_avg_controls[k] == p.nu_x
+            V_avg = V_avgs[k]
+        end
+    end
+    @info "Using V_avg = $V_avg for nu_x = $(p.nu_x)"
+    
 
     # if c_e or c_i is None, set it to p.c
     if c_e === nothing
@@ -454,7 +473,12 @@ function double_conductance_lif(p::DoubleConductanceLIF)
                 V[i] = Vre
                 refr_count[i] -= 1
             else
-                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V[i] - E_e) - gi[i]*(V[i] - E_i) )
+                if do_V_avg
+                    V_eff = V_avg
+                else
+                    V_eff = V[i]
+                end
+                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V_eff - E_e) - gi[i]*(V_eff - E_i) )
                 if V[i] >= Vth
                     V[i] = Vre
                     S = 1.0 / dt

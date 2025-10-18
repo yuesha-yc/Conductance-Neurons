@@ -1,0 +1,47 @@
+[experiment]
+title = "Double Conductance LIF Neurons"
+description = ""
+base_seed = 0
+
+[defaults]
+t_0 = 0.0
+T = 10000000
+dt = 0.1
+fano_window = 100
+burn_in_time = 20000.0
+buffer_time = 10000.0
+g_L = 1.0
+E_L = -75.3
+C = 15.0
+tau_m = 15.0
+Vre = -60.0
+Vth = -54.0
+tau_ref = 2.0
+tau_e_decay = 3.0
+tau_i_decay = 2.0
+tau_e_rise = 1.0
+tau_i_rise = 1.0
+E_i = -70.0
+E_e = 10
+g = 35
+a = 1.0
+K = 1
+gamma = 1
+eta = 0.6
+c = 0.5
+c_e = 1.0
+c_i = 0.0
+N_cells = 2
+do_V_avg = true
+V_avg = -66.0
+V_avg_controls = [100, 250, 400, 550, 700, 850, 1000, 1150, 1300, 1450]
+V_avgs = [-68.82743065569505, -66.64279482201182, -66.14356982228355, -66.00036277407378, -65.96033441416681, -65.94837734775506, -65.9582452724166, -65.97169859957386, -65.99097410217456, -66.0127742263815]
+
+[fixed]
+model = "double_conductance_lif"
+save_downsampled = false
+note = ""
+
+[grid]
+# 100 to 1500 in 10 steps
+nu_x = [100, 250, 400, 550, 700, 850, 1000, 1150, 1300, 1450]
