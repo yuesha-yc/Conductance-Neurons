@@ -69,7 +69,7 @@ Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
 
     # synapse counts
     K::Int = 400
-    gamma::Int = 5
+    gamma::Float64 = 5.0
 
     # presynaptic firing rates (Hz -> per ms)
     eta::Float64 = 1.5
@@ -116,7 +116,7 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
 
     # synapse counts
     K::Int = 400
-    gamma::Int = 5
+    gamma::Float64 = 5.0
 
     # presynaptic firing rates (Hz -> per ms)
     eta::Float64 = 1.5
@@ -203,6 +203,23 @@ function single_conductance_lif(p::SingleConductanceLIF)
     mean_Ii = 0.0; M2_Ii = 0.0
     mean_It = 0.0; M2_It = 0.0
 
+    # covariance accumulators
+    C_V_ge = 0.0
+    C_V_gi = 0.0
+    C_ge_gi = 0.0
+    C_Ie_Ii = 0.0
+    C_V_It = 0.0
+    C_V_Ie = 0.0
+    C_V_Ii = 0.0
+
+    C_V2_ge = 0.0
+    C_V2_gi = 0.0
+    C_V_ge2 = 0.0
+    C_V_gi2 = 0.0
+
+    C_V2_ge2 = 0.0
+    C_V2_gi2 = 0.0
+
     # --- firing rate (from spike density) ---
     sum_S = 0.0
 
@@ -227,16 +244,16 @@ function single_conductance_lif(p::SingleConductanceLIF)
             gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
         elseif no_rise && !no_decay
             # only decay
-            ge += - dt * ge / tau_e_decay + dt * s_e * j_e
-            gi += - dt * gi / tau_i_decay + dt * s_i * j_i
+            ge += - dt * ge / tau_e_decay + g_L * dt * s_e * j_e
+            gi += - dt * gi / tau_i_decay + g_L * dt * s_i * j_i
         elseif no_decay && !no_rise
             # only rise
-            ge += - dt * ge / tau_e_rise + dt * s_e * j_e
-            gi += - dt * gi / tau_i_rise + dt * s_i * j_i
+            ge += - dt * ge / tau_e_rise + g_L * dt * s_e * j_e
+            gi += - dt * gi / tau_i_rise + g_L * dt * s_i * j_i
         else
             # instantaneous jumps
-            ge = dt * s_e * j_e
-            gi = dt * s_i * j_i
+            ge = C * dt * s_e * j_e
+            gi = C * dt * s_i * j_i
         end
 
         # refractory & spike reset
@@ -270,28 +287,59 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
             # Welford updates
             n_samp += 1
-            let x = V
-                δ = x - mean_V; mean_V += δ / n_samp; M2_V += δ*(x - mean_V)
-            end
-            let x = ge
-                δ = x - mean_ge; mean_ge += δ / n_samp; M2_ge += δ*(x - mean_ge)
-            end
-            let x = gi
-                δ = x - mean_gi; mean_gi += δ / n_samp; M2_gi += δ*(x - mean_gi)
-            end
-            # compute g0 = g_L + ge + gi
-            let x = ge + gi + g_L
-                δ = x - mean_g0; mean_g0 += δ / n_samp; M2_g0 += δ*(x - mean_g0)
-            end
-            let x = Ie
-                δ = x - mean_Ie; mean_Ie += δ / n_samp; M2_Ie += δ*(x - mean_Ie)
-            end
-            let x = Ii
-                δ = x - mean_Ii; mean_Ii += δ / n_samp; M2_Ii += δ*(x - mean_Ii)
-            end
-            let x = It
-                δ = x - mean_It; mean_It += δ / n_samp; M2_It += δ*(x - mean_It)
-            end
+
+            # cache all current values
+            xV  = V
+            xge = ge
+            xgi = gi
+            xIe = Ie
+            xIi = Ii
+            xIt = It
+            xg0 = ge + gi + g_L
+
+            # deltas relative to previous means
+            δV  = xV  - mean_V
+            δge = xge - mean_ge
+            δgi = xgi - mean_gi
+            δg0 = xg0 - mean_g0
+            δIe = xIe - mean_Ie
+            δIi = xIi - mean_Ii
+            δIt = xIt - mean_It
+
+            # update means
+            mean_V  += δV  / n_samp
+            mean_ge += δge / n_samp
+            mean_gi += δgi / n_samp
+            mean_g0 += δg0 / n_samp
+            mean_Ie += δIe / n_samp
+            mean_Ii += δIi / n_samp
+            mean_It += δIt / n_samp
+
+            # update M2 (variances)
+            M2_V  += δV  * (xV  - mean_V)
+            M2_ge += δge * (xge - mean_ge)
+            M2_gi += δgi * (xgi - mean_gi)
+            M2_g0 += δg0 * (xg0 - mean_g0)
+            M2_Ie += δIe * (xIe - mean_Ie)
+            M2_Ii += δIi * (xIi - mean_Ii)
+            M2_It += δIt * (xIt - mean_It)
+
+            # update covariances using old means
+            C_V_ge += δV * (xge - mean_ge)
+            C_V_gi += δV * (xgi - mean_gi)
+            C_ge_gi += δge * (xgi - mean_gi)
+            C_Ie_Ii += δIe * (xIi - mean_Ii)
+            C_V_It += δV * (xIt - mean_It)
+            C_V_Ie += δV * (xIe - mean_Ie)
+            C_V_Ii += δV * (xIi - mean_Ii)
+
+            # update the third and fourth order covariances
+            C_V2_ge += δV^2 * (xge - mean_ge)
+            C_V2_gi += δV^2 * (xgi - mean_gi)
+            C_V_ge2 += δV * (xge - mean_ge)^2
+            C_V_gi2 += δV * (xgi - mean_gi)^2
+            C_V2_ge2 += δV^2 * (xge - mean_ge)^2
+            C_V2_gi2 += δV^2 * (xgi - mean_gi)^2
 
             # rate and Fano (counts per 100 ms)
             sum_S += S
@@ -313,6 +361,21 @@ function single_conductance_lif(p::SingleConductanceLIF)
     var_Ie = n_samp > 1 ? M2_Ie / (n_samp - 1) : 0.0
     var_Ii = n_samp > 1 ? M2_Ii / (n_samp - 1) : 0.0
     var_It = n_samp > 1 ? M2_It / (n_samp - 1) : 0.0
+
+    cov_V_ge = n_samp > 1 ? C_V_ge / (n_samp - 1) : 0.0
+    cov_V_gi = n_samp > 1 ? C_V_gi / (n_samp - 1) : 0.0
+    cov_ge_gi = n_samp > 1 ? C_ge_gi / (n_samp - 1) : 0.0
+    cov_Ie_Ii = n_samp > 1 ? C_Ie_Ii / (n_samp - 1) : 0.0
+    cov_V_It = n_samp > 1 ? C_V_It / (n_samp - 1) : 0.0
+    cov_V_Ie = n_samp > 1 ? C_V_Ie / (n_samp - 1) : 0.0
+    cov_V_Ii = n_samp > 1 ? C_V_Ii / (n_samp - 1) : 0.0
+
+    cov_V2_ge = n_samp > 1 ? C_V2_ge / (n_samp - 1) : 0.0
+    cov_V2_gi = n_samp > 1 ? C_V2_gi / (n_samp - 1) : 0.0
+    cov_V_ge2 = n_samp > 1 ? C_V_ge2 / (n_samp - 1) : 0.0
+    cov_V_gi2 = n_samp > 1 ? C_V_gi2 / (n_samp - 1) : 0.0
+    cov_V2_ge2 = n_samp > 1 ? C_V2_ge2 / (n_samp - 1) : 0.0
+    cov_V2_gi2 = n_samp > 1 ? C_V2_gi2 / (n_samp - 1) : 0.0
 
     # Fano factor of window counts
     fano_factor = isempty(counts) ? NaN : (var(counts) / mean(counts))
@@ -352,6 +415,19 @@ function single_conductance_lif(p::SingleConductanceLIF)
         "mean_I_e" => mean_Ie, "var_I_e" => var_Ie,
         "mean_I_i" => mean_Ii, "var_I_i" => var_Ii,
         "mean_I_tot" => mean_It, "var_I_tot" => var_It,
+        "cov_V_g_e" => cov_V_ge,
+        "cov_V_g_i" => cov_V_gi,
+        "cov_g_e_g_i" => cov_ge_gi,
+        "cov_I_e_I_i" => cov_Ie_Ii,
+        "cov_V_I_tot" => cov_V_It,
+        "cov_V_I_e" => cov_V_Ie,
+        "cov_V_I_i" => cov_V_Ii,
+        "cov_V2_g_e" => cov_V2_ge,
+        "cov_V2_g_i" => cov_V2_gi,
+        "cov_V_g_e2" => cov_V_ge2,
+        "cov_V_g_i2" => cov_V_gi2,
+        "cov_V2_g_e2" => cov_V2_ge2,
+        "cov_V2_g_i2" => cov_V2_gi2,
     )
 end
 
