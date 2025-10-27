@@ -50,6 +50,7 @@ Base.@kwdef struct SingleConductanceLIF <: AbstractSimParams
     tau_m::Float64 = C / g_L
 
     # spiking parameters
+    spike_reset::Bool = true
     Vre::Float64 = -60.0
     Vth::Float64 = -54.0
     tau_ref::Float64 = 2.0  # ms
@@ -154,6 +155,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
     tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt)); refr_count = 0
     tau_e_decay, tau_i_decay = p.tau_e_decay, p.tau_i_decay
     tau_e_rise, tau_i_rise = p.tau_e_rise, p.tau_i_rise
+    no_rise = (tau_e_rise == 0.0) && (tau_i_rise == 0.0)
+    no_decay = (tau_e_decay == 0.0) && (tau_i_decay == 0.0)
     E_e, E_i = p.E_e, p.E_i
     a, g = p.a, p.g
     j_e, j_i = a, a * g
@@ -164,6 +167,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
     r_i = p.eta * r_e         # per ms
     fano_window = p.fano_window
     buffer_time = p.buffer_time
+    spike_reset = p.spike_reset
 
     # Poisson dists
     dE = Poisson(K_e * r_e * dt)
@@ -213,13 +217,27 @@ function single_conductance_lif(p::SingleConductanceLIF)
         s_e = rand(dE) / dt
         s_i = rand(dI) / dt
 
-        # conductances
-        xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
-        xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
-        xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
-        xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
-        ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
-        gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
+        if !no_rise && !no_decay
+            # conductances
+            xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
+            xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
+            xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
+            xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
+            ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
+            gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
+        elseif no_rise && !no_decay
+            # only decay
+            ge += - dt * ge / tau_e_decay + dt * s_e * j_e
+            gi += - dt * gi / tau_i_decay + dt * s_i * j_i
+        elseif no_decay && !no_rise
+            # only rise
+            ge += - dt * ge / tau_e_rise + dt * s_e * j_e
+            gi += - dt * gi / tau_i_rise + dt * s_i * j_i
+        else
+            # instantaneous jumps
+            ge = dt * s_e * j_e
+            gi = dt * s_i * j_i
+        end
 
         # refractory & spike reset
         S = 0.0
@@ -228,7 +246,8 @@ function single_conductance_lif(p::SingleConductanceLIF)
             refr_count -= 1
         else
             V = V + dt * invC * ( -g_L*(V - E_L) - ge*(V - E_e) - gi*(V - E_i) )
-            if V >= Vth
+            # check if spike-reset mechanism is enabled
+            if spike_reset && V >= Vth
                 V = Vre
                 S = 1.0 / dt
                 refr_count = ref_steps
