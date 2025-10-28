@@ -18,15 +18,15 @@ Vre = -65.0
 Vth = -55.0
 tau_ref = 2.0
 spike_reset = true
-tau_e_decay = 1.0
-tau_i_decay = 1.0
+tau_e_decay = 0.0
+tau_i_decay = 0.0
 tau_e_rise = 0.0
 tau_i_rise = 0.0
 E_i = -75.0
 E_e = 0.0
 g = 12.0
-a = 0.3
-K = 33
+a = 0.03
+K = 1000
 gamma = 0.25
 eta = 1.4
 
@@ -36,5 +36,5 @@ save_downsampled = false
 note = ""
 
 [grid]
-# scan 20 to 200
-nu_x = [20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0]
+# 10 to 100 in 10 steps
+nu_x = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]

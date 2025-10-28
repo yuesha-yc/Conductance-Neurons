@@ -162,7 +162,7 @@ function single_conductance_lif(p::SingleConductanceLIF)
     j_e, j_i = a, a * g
     K, gamma = p.K, p.gamma
     K_e = max(K, 1)
-    K_i = max(Int(gamma * K), 1)
+    K_i = max(Int(round(gamma * K)), 1)
     r_e = p.nu_x / 1000       # per ms
     r_i = p.eta * r_e         # per ms
     fano_window = p.fano_window
@@ -231,29 +231,29 @@ function single_conductance_lif(p::SingleConductanceLIF)
 
     @inbounds for n in 1:N
         # presynaptic densities
-        s_e = rand(dE) / dt
-        s_i = rand(dI) / dt
+        n_e = rand(dE)
+        n_i = rand(dI)
 
         if !no_rise && !no_decay
             # conductances
-            xe_rise += - dt * xe_rise / tau_e_rise + dt * s_e * j_e
-            xe_decay += - dt * xe_decay / tau_e_decay + dt * s_e * j_e
-            xi_rise += - dt * xi_rise / tau_i_rise + dt * s_i * j_i
-            xi_decay += - dt * xi_decay / tau_i_decay + dt * s_i * j_i
+            xe_rise += - dt * xe_rise / tau_e_rise + g_L * n_e * j_e
+            xe_decay += - dt * xe_decay / tau_e_decay + g_L * n_e * j_e
+            xi_rise += - dt * xi_rise / tau_i_rise + g_L * n_i * j_i
+            xi_decay += - dt * xi_decay / tau_i_decay + g_L * n_i * j_i
             ge = (xe_decay - xe_rise) / (tau_e_decay - tau_e_rise)
             gi = (xi_decay - xi_rise) / (tau_i_decay - tau_i_rise)
         elseif no_rise && !no_decay
             # only decay
-            ge += - dt * ge / tau_e_decay + g_L * dt * s_e * j_e
-            gi += - dt * gi / tau_i_decay + g_L * dt * s_i * j_i
+            ge += - dt * ge / tau_e_decay + g_L * n_e * j_e
+            gi += - dt * gi / tau_i_decay + g_L * n_i * j_i
         elseif no_decay && !no_rise
             # only rise
-            ge += - dt * ge / tau_e_rise + g_L * dt * s_e * j_e
-            gi += - dt * gi / tau_i_rise + g_L * dt * s_i * j_i
+            ge += - dt * ge / tau_e_rise + g_L * n_e * j_e
+            gi += - dt * gi / tau_i_rise + g_L * n_i * j_i
         else
             # instantaneous jumps
-            ge = C * dt * s_e * j_e
-            gi = C * dt * s_i * j_i
+            ge = g_L * n_e * j_e
+            gi = g_L * n_i * j_i
         end
 
         # refractory & spike reset

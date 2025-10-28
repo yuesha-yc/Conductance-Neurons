@@ -1,6 +1,6 @@
 [experiment]
 title = "Single-conductance nu_x sweep"
-description = "Linear grid over nu_x with SingleConductanceLIF defaults."
+description = "FF down, nu up, var V down, mean V up"
 base_seed = 0
 
 [defaults]
@@ -36,5 +36,5 @@ save_downsampled = false
 note = ""
 
 [grid]
-# scan 20 to 200
-nu_x = [20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0]
+# scan 30 to 300
+nu_x = [30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 210.0, 240.0, 270.0, 300.0]
