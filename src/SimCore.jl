@@ -98,6 +98,7 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
     tau_m::Float64 = C / g_L
 
     # spiking parameters
+    spike_reset::Bool = true
     Vre::Float64 = -60.0
     Vth::Float64 = -54.0
     tau_ref::Float64 = 2.0  # ms
@@ -129,9 +130,9 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
     N_cells::Int = 2
     V_avg::Float64 = -70
     # do V_avg, a boolean
-    do_V_avg::Bool = false
-    V_avgs::Vector{Float64} = []
-    V_avg_controls::Vector{Float64} = []
+    # do_V_avg::Bool = false
+    # V_avgs::Vector{Float64} = []
+    # V_avg_controls::Vector{Float64} = []
 end
 
 """Dummy sine wave generator standing in for a membrane potential time series."""
@@ -453,6 +454,8 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     tau_ref = p.tau_ref; ref_steps = Int(round(tau_ref / dt))
     tau_e_decay, tau_i_decay = p.tau_e_decay, p.tau_i_decay
     tau_e_rise, tau_i_rise = p.tau_e_rise, p.tau_i_rise
+    no_rise = (tau_e_rise == 0.0) && (tau_i_rise == 0.0)
+    no_decay = (tau_e_decay == 0.0) && (tau_i_decay == 0.0)
     E_e, E_i = p.E_e, p.E_i
     a, g = p.a, p.g
     j_e, j_i = a, a * g
@@ -463,22 +466,23 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     r_i = p.eta * r_e         # per ms
     fano_window = p.fano_window
     buffer_time = p.buffer_time
+    spike_reset = p.spike_reset
     c_e = p.c_e # correlation ratio
     c_i = p.c_i # correlation ratio
     N_cells = p.N_cells
     refr_count = fill(0, N_cells)
 
     # use averaged V for conductance currents
-    do_V_avg = p.do_V_avg
-    V_avg = p.V_avg
-    V_avgs = p.V_avgs
-    V_avg_controls = p.V_avg_controls
-    for k in 1:size(V_avg_controls, 1)
-        if V_avg_controls[k] == p.nu_x
-            V_avg = V_avgs[k]
-        end
-    end
-    @info "Using V_avg = $V_avg for nu_x = $(p.nu_x)"
+    # do_V_avg = p.do_V_avg
+    # V_avg = p.V_avg
+    # V_avgs = p.V_avgs
+    # V_avg_controls = p.V_avg_controls
+    # for k in 1:size(V_avg_controls, 1)
+    #     if V_avg_controls[k] == p.nu_x
+    #         V_avg = V_avgs[k]
+    #     end
+    # end
+    # @info "Using V_avg = $V_avg for nu_x = $(p.nu_x)"
     
 
     # if c_e or c_i is None, set it to p.c
@@ -491,8 +495,8 @@ function double_conductance_lif(p::DoubleConductanceLIF)
 
     @assert 0.0 ≤ c_e ≤ 1.0 "c_e must be in [0,1]"
     @assert 0.0 ≤ c_i ≤ 1.0 "c_i must be in [0,1]"
-    @assert tau_e_decay != tau_e_rise "tau_e_decay must differ from tau_e_rise"
-    @assert tau_i_decay != tau_i_rise "tau_i_decay must differ from tau_i_rise"
+    # @assert tau_e_decay != tau_e_rise "tau_e_decay must differ from tau_e_rise"
+    # @assert tau_i_decay != tau_i_rise "tau_i_decay must differ from tau_i_rise"
 
     # Poisson dists
     dE = Poisson(K_e * r_e * (1-c_e) * dt)
@@ -533,6 +537,21 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     mean_Ii = fill(0.0, N_cells); M2_Ii = fill(0.0, N_cells)
     mean_It = fill(0.0, N_cells); M2_It = fill(0.0, N_cells)
 
+    # covariance accumulators
+    C_V_ge = fill(0.0, N_cells)
+    C_V_gi = fill(0.0, N_cells)
+    C_ge_gi = fill(0.0, N_cells)
+    C_Ie_Ii = fill(0.0, N_cells)
+    C_V_It = fill(0.0, N_cells)
+    C_V_Ie = fill(0.0, N_cells)
+    C_V_Ii = fill(0.0, N_cells)
+    C_V2_ge = fill(0.0, N_cells)
+    C_V2_gi = fill(0.0, N_cells)
+    C_V_ge2 = fill(0.0, N_cells)
+    C_V_gi2 = fill(0.0, N_cells)
+    C_V2_ge2 = fill(0.0, N_cells)
+    C_V2_gi2 = fill(0.0, N_cells)
+
     # --- firing rate (from spike density) ---
     sum_S = fill(0.0, N_cells)
 
@@ -545,22 +564,36 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     counts = [Float32[] for _ in 1:N_cells]
 
     @inbounds for n in 1:N
-        s_e_ind = rand(ind_e_rng, dE, N_cells) ./ dt
-        s_i_ind = rand(ind_i_rng, dI, N_cells) ./ dt
-        s_e_c = rand(sh_e_rng, dE_C) / dt
-        s_i_c = rand(sh_i_rng, dI_C) / dt
+        s_e_ind = rand(ind_e_rng, dE, N_cells)
+        s_i_ind = rand(ind_i_rng, dI, N_cells)
+        s_e_c = rand(sh_e_rng, dE_C)
+        s_i_c = rand(sh_i_rng, dI_C)
 
         for i in 1:N_cells
-            s_e = s_e_ind[i] + s_e_c
-            s_i = s_i_ind[i] + s_i_c
+            n_e = s_e_ind[i] + s_e_c
+            n_i = s_i_ind[i] + s_i_c
 
-            # conductances
-            xe_rise[i] += - dt * xe_rise[i] / tau_e_rise + dt * s_e * j_e
-            xe_decay[i] += - dt * xe_decay[i] / tau_e_decay + dt * s_e * j_e
-            xi_rise[i] += - dt * xi_rise[i] / tau_i_rise + dt * s_i * j_i
-            xi_decay[i] += - dt * xi_decay[i] / tau_i_decay + dt * s_i * j_i
-            ge[i] = (xe_decay[i] - xe_rise[i]) / (tau_e_decay - tau_e_rise)
-            gi[i] = (xi_decay[i] - xi_rise[i]) / (tau_i_decay - tau_i_rise)
+            if !no_rise && !no_decay
+                # conductances
+                xe_rise[i] += - dt * xe_rise[i] / tau_e_rise + g_L * n_e * j_e
+                xe_decay[i] += - dt * xe_decay[i] / tau_e_decay + g_L * n_e * j_e
+                xi_rise[i] += - dt * xi_rise[i] / tau_i_rise + g_L * n_i * j_i
+                xi_decay[i] += - dt * xi_decay[i] / tau_i_decay + g_L * n_i * j_i
+                ge[i] = (xe_decay[i] - xe_rise[i]) / (tau_e_decay - tau_e_rise)
+                gi[i] = (xi_decay[i] - xi_rise[i]) / (tau_i_decay - tau_i_rise)
+            elseif no_rise && !no_decay
+                # only decay
+                ge[i] += - dt * ge[i] / tau_e_decay + g_L * n_e * j_e
+                gi[i] += - dt * gi[i] / tau_i_decay + g_L * n_i * j_i
+            elseif no_decay && !no_rise
+                # only rise
+                ge[i] += - dt * ge[i] / tau_e_rise + g_L * n_e * j_e
+                gi[i] += - dt * gi[i] / tau_i_rise + g_L * n_i * j_i
+            else
+                # instantaneous jumps
+                ge[i] = g_L * n_e * j_e
+                gi[i] = g_L * n_i * j_i
+            end
 
             # refractory & spike reset
             S = 0.0
@@ -568,13 +601,8 @@ function double_conductance_lif(p::DoubleConductanceLIF)
                 V[i] = Vre
                 refr_count[i] -= 1
             else
-                if do_V_avg
-                    V_eff = V_avg
-                else
-                    V_eff = V[i]
-                end
-                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V_eff - E_e) - gi[i]*(V_eff - E_i) )
-                if V[i] >= Vth
+                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V[i] - E_e) - gi[i]*(V[i] - E_i) )
+                if spike_reset && V[i] >= Vth
                     V[i] = Vre
                     S = 1.0 / dt
                     refr_count[i] = ref_steps
@@ -598,27 +626,59 @@ function double_conductance_lif(p::DoubleConductanceLIF)
 
                 # Welford updates
                 n_samp[i] += 1
-                let x = V[i]
-                    δ = x - mean_V[i]; mean_V[i] += δ / n_samp[i]; M2_V[i] += δ*(x - mean_V[i])
-                end
-                let x = ge[i]
-                    δ = x - mean_ge[i]; mean_ge[i] += δ / n_samp[i]; M2_ge[i] += δ*(x - mean_ge[i])
-                end
-                let x = gi[i]
-                    δ = x - mean_gi[i]; mean_gi[i] += δ / n_samp[i]; M2_gi[i] += δ*(x - mean_gi[i])
-                end
-                let x = g0
-                    δ = x - mean_g0[i]; mean_g0[i] += δ / n_samp[i]; M2_g0[i] += δ*(x - mean_g0[i])
-                end
-                let x = Ie
-                    δ = x - mean_Ie[i]; mean_Ie[i] += δ / n_samp[i]; M2_Ie[i] += δ*(x - mean_Ie[i])
-                end
-                let x = Ii
-                    δ = x - mean_Ii[i]; mean_Ii[i] += δ / n_samp[i]; M2_Ii[i] += δ*(x - mean_Ii[i])
-                end
-                let x = It
-                    δ = x - mean_It[i]; mean_It[i] += δ / n_samp[i]; M2_It[i] += δ*(x - mean_It[i])
-                end
+                
+                # cache all current values
+                xV  = V[i]
+                xge = ge[i]
+                xgi = gi[i]
+                xIe = Ie
+                xIi = Ii
+                xIt = It
+                xg0 = ge[i] + gi[i] + g_L
+
+                # deltas relative to previous means
+                δV  = xV  - mean_V[i]
+                δge = xge - mean_ge[i]
+                δgi = xgi - mean_gi[i]
+                δg0 = xg0 - mean_g0[i]
+                δIe = xIe - mean_Ie[i]
+                δIi = xIi - mean_Ii[i]
+                δIt = xIt - mean_It[i]
+
+                # update means
+                mean_V[i]  += δV  / n_samp[i]
+                mean_ge[i] += δge / n_samp[i]
+                mean_gi[i] += δgi / n_samp[i]
+                mean_g0[i] += δg0 / n_samp[i]
+                mean_Ie[i] += δIe / n_samp[i]
+                mean_Ii[i] += δIi / n_samp[i]
+                mean_It[i] += δIt / n_samp[i]
+
+                # update M2 (variances)
+                M2_V[i]  += δV  * (xV  - mean_V[i])
+                M2_ge[i] += δge * (xge - mean_ge[i])
+                M2_gi[i] += δgi * (xgi - mean_gi[i])
+                M2_g0[i] += δg0 * (xg0 - mean_g0[i])
+                M2_Ie[i] += δIe * (xIe - mean_Ie[i])
+                M2_Ii[i] += δIi * (xIi - mean_Ii[i])
+                M2_It[i] += δIt * (xIt - mean_It[i])
+
+                # update covariances using old means
+                C_V_ge[i] += δV * (xge - mean_ge[i])
+                C_V_gi[i] += δV * (xgi - mean_gi[i])
+                C_ge_gi[i] += δge * (xgi - mean_gi[i])
+                C_Ie_Ii[i] += δIe * (xIi - mean_Ii[i])
+                C_V_It[i] += δV * (xIt - mean_It[i])
+                C_V_Ie[i] += δV * (xIe - mean_Ie[i])
+                C_V_Ii[i] += δV * (xIi - mean_Ii[i])
+
+                # update the third and fourth order covariances
+                C_V2_ge[i] += δV^2 * (xge - mean_ge[i])
+                C_V2_gi[i] += δV^2 * (xgi - mean_gi[i])
+                C_V_ge2[i] += δV * (xge - mean_ge[i])^2
+                C_V_gi2[i] += δV * (xgi - mean_gi[i])^2
+                C_V2_ge2[i] += δV^2 * (xge - mean_ge[i])^2
+                C_V2_gi2[i] += δV^2 * (xgi - mean_gi[i])^2
 
                 # rate and Fano (counts per 100 ms)
                 sum_S[i] += S
@@ -641,6 +701,22 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     var_Ie = fill(0.0, N_cells)
     var_Ii = fill(0.0, N_cells)
     var_It = fill(0.0, N_cells)
+
+    cov_V_ge = fill(0.0, N_cells)
+    cov_V_gi = fill(0.0, N_cells)
+    cov_ge_gi = fill(0.0, N_cells)
+    cov_Ie_Ii = fill(0.0, N_cells)
+    cov_V_It = fill(0.0, N_cells)
+    cov_V_Ie = fill(0.0, N_cells)
+    cov_V_Ii = fill(0.0, N_cells)
+
+    cov_V2_ge = fill(0.0, N_cells)
+    cov_V2_gi = fill(0.0, N_cells)
+    cov_V_ge2 = fill(0.0, N_cells)
+    cov_V_gi2 = fill(0.0, N_cells)
+    cov_V2_ge2 = fill(0.0, N_cells)
+    cov_V2_gi2 = fill(0.0, N_cells)
+
     fano_factor = fill(NaN, N_cells)
     nu = fill(0.0, N_cells)
 
@@ -652,6 +728,22 @@ function double_conductance_lif(p::DoubleConductanceLIF)
         var_Ie[i] = n_samp[i] > 1 ? M2_Ie[i] / (n_samp[i] - 1) : 0.0
         var_Ii[i] = n_samp[i] > 1 ? M2_Ii[i] / (n_samp[i] - 1) : 0.0
         var_It[i] = n_samp[i] > 1 ? M2_It[i] / (n_samp[i] - 1) : 0.0
+
+        # covariances
+        cov_V_ge[i] = n_samp[i] > 1 ? C_V_ge[i] / (n_samp[i] - 1) : 0.0
+        cov_V_gi[i] = n_samp[i] > 1 ? C_V_gi[i] / (n_samp[i] - 1) : 0.0
+        cov_ge_gi[i] = n_samp[i] > 1 ? C_ge_gi[i] / (n_samp[i] - 1) : 0.0
+        cov_Ie_Ii[i] = n_samp[i] > 1 ? C_Ie_Ii[i] / (n_samp[i] - 1) : 0.0
+        cov_V_It[i] = n_samp[i] > 1 ? C_V_It[i] / (n_samp[i] - 1) : 0.0
+        cov_V_Ie[i] = n_samp[i] > 1 ? C_V_Ie[i] / (n_samp[i] - 1) : 0.0
+        cov_V_Ii[i] = n_samp[i] > 1 ? C_V_Ii[i] / (n_samp[i] - 1) : 0.0
+
+        cov_V2_ge[i] = n_samp[i] > 1 ? C_V2_ge[i] / (n_samp[i] - 1) : 0.0
+        cov_V2_gi[i] = n_samp[i] > 1 ? C_V2_gi[i] / (n_samp[i] - 1) : 0.0
+        cov_V_ge2[i] = n_samp[i] > 1 ? C_V_ge2[i] / (n_samp[i] - 1) : 0.0
+        cov_V_gi2[i] = n_samp[i] > 1 ? C_V_gi2[i] / (n_samp[i] - 1) : 0.0
+        cov_V2_ge2[i] = n_samp[i] > 1 ? C_V2_ge2[i] / (n_samp[i] - 1) : 0.0
+        cov_V2_gi2[i] = n_samp[i] > 1 ? C_V2_gi2[i] / (n_samp[i] - 1) : 0.0
 
         # Fano factor of window counts
         if isempty(counts[i])
@@ -718,6 +810,19 @@ function double_conductance_lif(p::DoubleConductanceLIF)
         "mean_I_e" => mean_Ie, "var_I_e" => var_Ie,
         "mean_I_i" => mean_Ii, "var_I_i" => var_Ii,
         "mean_I_tot" => mean_It, "var_I_tot" => var_It,
+        "cov_V_g_e" => cov_V_ge,
+        "cov_V_g_i" => cov_V_gi,
+        "cov_g_e_g_i" => cov_ge_gi,
+        "cov_I_e_I_i" => cov_Ie_Ii,
+        "cov_V_I_tot" => cov_V_It,
+        "cov_V_I_e" => cov_V_Ie,
+        "cov_V_I_i" => cov_V_Ii,
+        "cov_V2_g_e" => cov_V2_ge,
+        "cov_V2_g_i" => cov_V2_gi,
+        "cov_V_g_e2" => cov_V_ge2,
+        "cov_V_g_i2" => cov_V_gi2,
+        "cov_V2_g_e2" => cov_V2_ge2,
+        "cov_V2_g_i2" => cov_V2_gi2,
     )
 end
 
