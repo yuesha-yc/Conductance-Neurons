@@ -552,6 +552,33 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     C_V2_ge2 = fill(0.0, N_cells)
     C_V2_gi2 = fill(0.0, N_cells)
 
+    # --- pairwise (cross-neuron) covariance accumulators (for N_cells=2) ---
+    n_pair = 0.0  # shared sample count after burn-in
+
+    C_ge1_ge2  = 0.0
+    C_gi1_gi2  = 0.0
+    C_ge1_gi2  = 0.0
+    C_gi1_ge2  = 0.0
+
+    # currents
+    C_Ie1_Ie2  = 0.0
+    C_Ii1_Ii2  = 0.0
+    C_Ie1_Ii2  = 0.0
+    C_Ii1_Ie2  = 0.0
+    C_It1_It2  = 0.0
+
+    # voltage
+    C_V1_V2    = 0.0
+
+    # per-step scratch to hold deltas/x for both cells (filled each timestep)
+    δge_step = [0.0, 0.0]; xge_step = [0.0, 0.0]
+    δgi_step = [0.0, 0.0]; xgi_step = [0.0, 0.0]
+    δIe_step = [0.0, 0.0]; xIe_step = [0.0, 0.0]
+    δIi_step = [0.0, 0.0]; xIi_step = [0.0, 0.0]
+    δIt_step = [0.0, 0.0]; xIt_step = [0.0, 0.0]
+    # V
+    δV_step  = [0.0, 0.0];  xV_step  = [0.0, 0.0];
+
     # --- firing rate (from spike density) ---
     sum_S = fill(0.0, N_cells)
 
@@ -680,6 +707,17 @@ function double_conductance_lif(p::DoubleConductanceLIF)
                 C_V2_ge2[i] += δV^2 * (xge - mean_ge[i])^2
                 C_V2_gi2[i] += δV^2 * (xgi - mean_gi[i])^2
 
+                # record per-step deltas and current values for pairwise update
+                if N_cells == 2
+                    idx = i  # i is 1 or 2
+                    δge_step[idx] = δge;  xge_step[idx] = xge
+                    δgi_step[idx] = δgi;  xgi_step[idx] = xgi
+                    δIe_step[idx] = δIe;  xIe_step[idx] = xIe
+                    δIi_step[idx] = δIi;  xIi_step[idx] = xIi
+                    δIt_step[idx] = δIt;  xIt_step[idx] = xIt
+                    δV_step[idx]  = δV;   xV_step[idx]  = xV
+                end
+
                 # rate and Fano (counts per 100 ms)
                 sum_S[i] += S
                 acc_counts[i] += S * dt     # S is 1/dt at spikes ⇒ S*dt is count increment
@@ -691,6 +729,44 @@ function double_conductance_lif(p::DoubleConductanceLIF)
                 end
             end
         end
+
+        # ---- pairwise updates (once per timestep, after both cells processed) ----
+        if N_cells == 2 && n > burn_in_steps
+            # symmetric Welford-style update: C += 0.5*(δx1*(y2 - mean_y2) + δy2*(x1 - mean_x1))
+            n_pair += 1.0
+
+            C_ge1_ge2 += 0.5 * ( δge_step[1]*(xge_step[2] - mean_ge[2]) +
+                                  δge_step[2]*(xge_step[1] - mean_ge[1]) )
+
+            C_gi1_gi2 += 0.5 * ( δgi_step[1]*(xgi_step[2] - mean_gi[2]) +
+                                  δgi_step[2]*(xgi_step[1] - mean_gi[1]) )
+
+            C_ge1_gi2 += 0.5 * ( δge_step[1]*(xgi_step[2] - mean_gi[2]) +
+                                  δgi_step[2]*(xge_step[1] - mean_ge[1]) )
+
+            C_gi1_ge2 += 0.5 * ( δgi_step[1]*(xge_step[2] - mean_ge[2]) +
+                                  δge_step[2]*(xgi_step[1] - mean_gi[1]) )
+
+            # currents
+            C_Ie1_Ie2 += 0.5 * ( δIe_step[1]*(xIe_step[2] - mean_Ie[2]) +
+                                 δIe_step[2]*(xIe_step[1] - mean_Ie[1]) )
+
+            C_Ii1_Ii2 += 0.5 * ( δIi_step[1]*(xIi_step[2] - mean_Ii[2]) +
+                                 δIi_step[2]*(xIi_step[1] - mean_Ii[1]) )
+
+            C_Ie1_Ii2 += 0.5 * ( δIe_step[1]*(xIi_step[2] - mean_Ii[2]) +
+                                 δIi_step[2]*(xIe_step[1] - mean_Ie[1]) )
+
+            C_Ii1_Ie2 += 0.5 * ( δIi_step[1]*(xIe_step[2] - mean_Ie[2]) +
+                                 δIe_step[2]*(xIi_step[1] - mean_Ii[1]) )
+
+            C_It1_It2 += 0.5 * ( δIt_step[1]*(xIt_step[2] - mean_It[2]) +
+                                 δIt_step[2]*(xIt_step[1] - mean_It[1]) )
+
+            C_V1_V2 += 0.5 * ( δV_step[1]*(xV_step[2] - mean_V[2]) + 
+                               δV_step[2]*(xV_step[1] - mean_V[1]) )
+        end
+
     end
 
     # finalize stats
@@ -716,6 +792,19 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     cov_V_gi2 = fill(0.0, N_cells)
     cov_V2_ge2 = fill(0.0, N_cells)
     cov_V2_gi2 = fill(0.0, N_cells)
+
+    # --- finalize pairwise covariances ---
+    cov_ge1_ge2 = (n_pair > 1) ? C_ge1_ge2 / (n_pair - 1.0) : 0.0
+    cov_gi1_gi2 = (n_pair > 1) ? C_gi1_gi2 / (n_pair - 1.0) : 0.0
+    cov_ge1_gi2 = (n_pair > 1) ? C_ge1_gi2 / (n_pair - 1.0) : 0.0
+    cov_gi1_ge2 = (n_pair > 1) ? C_gi1_ge2 / (n_pair - 1.0) : 0.0
+
+    cov_Ie1_Ie2 = (n_pair > 1) ? C_Ie1_Ie2 / (n_pair - 1.0) : 0.0
+    cov_Ii1_Ii2 = (n_pair > 1) ? C_Ii1_Ii2 / (n_pair - 1.0) : 0.0
+    cov_Ie1_Ii2 = (n_pair > 1) ? C_Ie1_Ii2 / (n_pair - 1.0) : 0.0
+    cov_Ii1_Ie2 = (n_pair > 1) ? C_Ii1_Ie2 / (n_pair - 1.0) : 0.0
+    cov_It1_It2 = (n_pair > 1) ? C_It1_It2 / (n_pair - 1.0) : 0.0
+    cov_V1_V2   = (n_pair > 1) ? C_V1_V2   / (n_pair - 1.0) : 0.0
 
     fano_factor = fill(NaN, N_cells)
     nu = fill(0.0, N_cells)
@@ -823,6 +912,19 @@ function double_conductance_lif(p::DoubleConductanceLIF)
         "cov_V_g_i2" => cov_V_gi2,
         "cov_V2_g_e2" => cov_V2_ge2,
         "cov_V2_g_i2" => cov_V2_gi2,
+
+        "cov_ge1_ge2" => cov_ge1_ge2,
+        "cov_gi1_gi2" => cov_gi1_gi2,
+        "cov_ge1_gi2" => cov_ge1_gi2,
+        "cov_gi1_ge2" => cov_gi1_ge2,
+
+        "cov_Ie1_Ie2" => cov_Ie1_Ie2,
+        "cov_Ii1_Ii2" => cov_Ii1_Ii2,
+        "cov_Ie1_Ii2" => cov_Ie1_Ii2,
+        "cov_Ii1_Ie2" => cov_Ii1_Ie2,
+        "cov_It1_It2" => cov_It1_It2,
+        "cov_V1_V2" => cov_V1_V2,
+
     )
 end
 

@@ -5,7 +5,7 @@ base_seed = 0
 
 [defaults]
 t_0 = 0.0
-T = 10000000
+T = 100000000
 dt = 0.1
 fano_window = 100
 burn_in_time = 20000.0
@@ -17,7 +17,7 @@ tau_m = 20.0
 Vre = -65.0
 Vth = -55.0
 tau_ref = 2.0
-spike_reset = true
+spike_reset = false
 tau_e_decay = 2.0
 tau_i_decay = 2.0
 tau_e_rise = 0.0
@@ -26,12 +26,12 @@ E_i = -75.0
 E_e = 0.0
 g = 12.0
 a = 0.3
-K = 1
+K = 100
 gamma = 1
 eta = 0.35
 c = 0.5
-c_e = 0.5
-c_i = 0.5
+c_e = 1.0
+c_i = 0.0
 N_cells = 2
 
 [fixed]
@@ -40,5 +40,5 @@ save_downsampled = false
 note = ""
 
 [grid]
-nu_x = [600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000]
+nu_x = [6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
 
