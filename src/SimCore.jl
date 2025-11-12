@@ -591,6 +591,11 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     counts = [Float32[] for _ in 1:N_cells]
 
     @inbounds for n in 1:N
+        # report steps in percentage
+        if n % Int(N/10) == 0
+            @info "Progress: $(n / Int(N/10) * 10)%"
+        end
+
         s_e_ind = rand(ind_e_rng, dE, N_cells)
         s_i_ind = rand(ind_i_rng, dI, N_cells)
         s_e_c = rand(sh_e_rng, dE_C)
@@ -602,24 +607,24 @@ function double_conductance_lif(p::DoubleConductanceLIF)
 
             if !no_rise && !no_decay
                 # conductances
-                xe_rise[i] += - dt * xe_rise[i] / tau_e_rise + g_L * n_e * j_e
-                xe_decay[i] += - dt * xe_decay[i] / tau_e_decay + g_L * n_e * j_e
-                xi_rise[i] += - dt * xi_rise[i] / tau_i_rise + g_L * n_i * j_i
-                xi_decay[i] += - dt * xi_decay[i] / tau_i_decay + g_L * n_i * j_i
+                xe_rise[i] += - dt * xe_rise[i] / tau_e_rise + C * n_e * j_e
+                xe_decay[i] += - dt * xe_decay[i] / tau_e_decay + C * n_e * j_e
+                xi_rise[i] += - dt * xi_rise[i] / tau_i_rise + C * n_i * j_i
+                xi_decay[i] += - dt * xi_decay[i] / tau_i_decay + C * n_i * j_i
                 ge[i] = (xe_decay[i] - xe_rise[i]) / (tau_e_decay - tau_e_rise)
                 gi[i] = (xi_decay[i] - xi_rise[i]) / (tau_i_decay - tau_i_rise)
             elseif no_rise && !no_decay
                 # only decay
-                ge[i] += - dt * ge[i] / tau_e_decay + g_L * n_e * j_e
-                gi[i] += - dt * gi[i] / tau_i_decay + g_L * n_i * j_i
+                ge[i] += - dt * ge[i] / tau_e_decay + C * n_e * j_e
+                gi[i] += - dt * gi[i] / tau_i_decay + C * n_i * j_i
             elseif no_decay && !no_rise
                 # only rise
-                ge[i] += - dt * ge[i] / tau_e_rise + g_L * n_e * j_e
-                gi[i] += - dt * gi[i] / tau_i_rise + g_L * n_i * j_i
+                ge[i] += - dt * ge[i] / tau_e_rise + C * n_e * j_e
+                gi[i] += - dt * gi[i] / tau_i_rise + C * n_i * j_i
             else
                 # instantaneous jumps
-                ge[i] = g_L * n_e * j_e
-                gi[i] = g_L * n_i * j_i
+                ge[i] = C * n_e * j_e
+                gi[i] = C * n_i * j_i
             end
 
             # refractory & spike reset
