@@ -1,1 +1,1 @@
-julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/double_lif/synaptic_decay/share_E_with_SR_vary_c_e.toml --local-threads 10
+julia -t auto --project=. src/Runner.jl --from-toml experiments/conductance/double_lif/delta_synapse/spike_reset/no_refractory/current/nu_x_E.toml --local-threads 10

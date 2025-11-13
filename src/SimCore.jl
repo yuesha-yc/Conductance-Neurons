@@ -133,6 +133,9 @@ Base.@kwdef struct DoubleConductanceLIF <: AbstractSimParams
     # do_V_avg::Bool = false
     # V_avgs::Vector{Float64} = []
     # V_avg_controls::Vector{Float64} = []
+
+    # current-based reference model
+    current_based_ref::Bool = false
 end
 
 """Dummy sine wave generator standing in for a membrane potential time series."""
@@ -471,6 +474,7 @@ function double_conductance_lif(p::DoubleConductanceLIF)
     c_i = p.c_i # correlation ratio
     N_cells = p.N_cells
     refr_count = fill(0, N_cells)
+    current_based_ref = p.current_based_ref
 
     # use averaged V for conductance currents
     # do_V_avg = p.do_V_avg
@@ -633,7 +637,13 @@ function double_conductance_lif(p::DoubleConductanceLIF)
                 V[i] = Vre
                 refr_count[i] -= 1
             else
-                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V[i] - E_e) - gi[i]*(V[i] - E_i) )
+                # if using a current-based reference model, use E_L for V in the synaptic currents
+                if current_based_ref
+                    V_eff = E_L
+                else
+                    V_eff = V[i]
+                end
+                V[i] = V[i] + dt * invC * ( -g_L*(V[i] - E_L) - ge[i]*(V_eff - E_e) - gi[i]*(V_eff - E_i) )
                 if spike_reset && V[i] >= Vth
                     V[i] = Vre
                     S = 1.0 / dt
